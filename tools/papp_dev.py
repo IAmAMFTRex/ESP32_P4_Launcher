@@ -49,6 +49,7 @@ LS, STAT, MKDIR, RM, RENAME = 0x10, 0x11, 0x12, 0x13, 0x14
 PUT_BEGIN, PUT_DATA, PUT_END, GET = 0x20, 0x21, 0x22, 0x28
 RUN, STOP, STATUS = 0x30, 0x31, 0x32
 REBOOT, CRASH, CRASH_CLEAR = 0x40, 0x41, 0x42
+NET = 0x52
 SHOT, INPUT = 0x50, 0x51
 INPUT_PAD, INPUT_KEY, INPUT_STATE = 1, 2, 3
 
@@ -464,6 +465,7 @@ def main():
     ap.add_argument("--port")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
+    p = sub.add_parser("net", help="network self-test on the board"); p.add_argument("--quick", action="store_true", help="link and gateway ping only"); p.add_argument("--scan", action="store_true", help="also list networks")
     sub.add_parser("ping")
     p = sub.add_parser("ls"); p.add_argument("path", nargs="?", default="/sd")
     p = sub.add_parser("stat"); p.add_argument("path")
@@ -510,6 +512,12 @@ def main():
         c = args.cmd
         if c == "info":
             print(json.dumps(dl.json(INFO), indent=2))
+        elif c == "net":
+            r = dl.request(NET, bytes([3 if args.scan else 2 if args.quick else 1])).decode("utf-8", "replace")
+            while r[:1] == "1":
+                time.sleep(1)
+                r = dl.request(NET).decode("utf-8", "replace")
+            print(r[1:].strip(chr(0)))
         elif c == "ping":
             print("pong" if dl.ping() else "?")
         elif c == "ls":

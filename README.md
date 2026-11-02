@@ -13,7 +13,7 @@ Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
 | Launcher version | App ABI | Toolchain | First board |
 |---|---|---|---|
-| 0.18.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800) |
+| 0.19.1 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -113,6 +113,8 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - Controllers: USB HID pads are read from their own report descriptor, and any pad can be remapped in Settings
 - Wi-Fi and network time through the on-board ESP32-C6 (connecting isn't tested yet, see Known limitations)
 - Battery level in the system bar
+- Wi-Fi file manager: a web page for the SD card, started from the Wi-Fi screen and protected by a PIN
+- Screenshots: Select + Y saves a BMP to `/sd/screenshots`
 
 **Applications** (all built from this repository)
 
@@ -197,7 +199,7 @@ directly: anything at `/sd/apps/<dir>/<file>.papp` appears on the home screen.
 
 ### 5. Update the launcher later
 
-Copy a newly built `launcher/build/launcher.bin` to `/sd/update/launcher.bin` and restart. The home screen
+Settings → Update downloads the newest GitHub release, or copy a newly built `launcher/build/launcher.bin` to `/sd/update/launcher.bin` and restart. The home screen
 offers the update. A new version has to run for 10 seconds to be kept. If it crashes first, the board returns
 to the previous version and says so.
 
@@ -545,10 +547,11 @@ Further reading:
   FAST region needs it. Teardown protects against leaks, not against a malicious app.
 - **The ABI is a preview,** and may change before 1.0.
 - **PPA scaling steps are 1/16,** so stretched output can leave a few pixels unused.
-- **Wi-Fi connecting and NTP are untested.** Scanning works, but no network has been joined yet.
+- **Online update and NTP are untested against the real internet,** and no release is published yet.
+- **The Wi-Fi file manager page is untested** from a phone or PC.
 - **Xbox-style (XInput) pads aren't supported yet,** and non-Sony HID pads are only tested with sample descriptors.
 - **Battery percentage isn't calibrated** against a real discharge curve.
-- **Not done yet:** mouse, keyboard layouts, rumble, BLE controllers, online updates, and the pull audio model.
+- **Not done yet:** mouse, keyboard layouts, rumble, BLE controllers and the pull audio model.
 - **SNES:** no SuperFX games.
 - **Emulator menus:** the 2600 and Lynx draw theirs on a black background.
 - **Under observation:** the USB HID task aborted once during testing and hasn't recurred. The cause isn't known yet.

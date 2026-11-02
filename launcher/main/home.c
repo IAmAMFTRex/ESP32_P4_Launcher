@@ -25,6 +25,7 @@
 #include "lx_input.h"
 #include "lx_update.h"
 #include "lx_net.h"
+#include "lx_web.h"
 #include "esp_system.h"
 
 #include <ctype.h>
@@ -148,7 +149,9 @@ static void focus_move(int dx, int dy)
         int ox = (b.x1 + b.x2) / 2 - cx, oy = (b.y1 + b.y2) / 2 - cy;
         int along = ox * dx + oy * dy, across = abs(dx ? oy : ox);
         if (along <= 0) continue;
-        int score = along + 3 * across;
+        /* Something in the same row (or column) wins over a nearer one beside it */
+        bool inline_ = dx ? b.y1 <= a.y2 && b.y2 >= a.y1 : b.x1 <= a.x2 && b.x2 >= a.x1;
+        int score = inline_ ? along : 100000 + along + 3 * across;
         if (score < best_score) { best_score = score; best = o; }
     }
     if (best) focus_set(best);
@@ -743,7 +746,8 @@ static void on_crash_ok(lv_event_t *ev)
     lv_msgbox_close(s_crash_box);
     s_crash_box = s_crash_ok = NULL;
     s_focused = NULL;
-    home_focus_list();
+    if (lv_screen_active() == s_settings) show_settings();
+    else home_focus_list();
 }
 
 static void on_dev_switch(lv_event_t *ev)
@@ -763,6 +767,7 @@ static void on_dev_switch(lv_event_t *ev)
 
 static lv_obj_t *s_wifi_btn, *s_wifi_scr, *s_wifi_status, *s_wifi_list, *s_wifi_tz;
 static lv_obj_t *s_wifi_scan, *s_wifi_forget, *s_wifi_back, *s_pw_scr, *s_pw_title, *s_pw_text;
+static lv_obj_t *s_web_btn, *s_web_info;
 static bool s_wifi_scanning;
 enum { PW_WIFI, PW_NEW_FOLDER, PW_RENAME };     /* s_pw_scr also asks for folder names */
 static int s_pw_mode;
@@ -772,15 +777,21 @@ static int s_wifi_sel;
 
 static void wifi_focus(void)
 {
+    /* Keep the focus on a button across a scan; list rows are rebuilt by it */
+    lv_obj_t *keep = s_focused;
+    bool fixed = keep == s_wifi_back || keep == s_wifi_scan || keep == s_wifi_forget || keep == s_web_btn ||
+                 keep == s_wifi_tz;
+    if (fixed) lv_obj_remove_state(keep, LV_STATE_FOCUSED);
     focus_clear_list();
     focus_add(s_wifi_back);
     focus_add(s_wifi_scan);
     focus_add(s_wifi_forget);
+    focus_add(s_web_btn);
     focus_add(s_wifi_tz);
     for (uint32_t i = 0; i < lv_obj_get_child_count(s_wifi_list); i++)
         focus_add(lv_obj_get_child(s_wifi_list, i));
     s_focused = NULL;
-    focus_set(s_wifi_scan);
+    focus_set(fixed && lv_screen_active() == s_wifi_scr ? keep : s_wifi_scan);
 }
 
 static void on_wifi_scan(lv_event_t *ev)
@@ -790,15 +801,37 @@ static void on_wifi_scan(lv_event_t *ev)
     lx_net_scan();
 }
 
+static void web_refresh(void);
+
 static void on_wifi_open(lv_event_t *ev)
 {
     lv_screen_load(s_wifi_scr);
     wifi_focus();
+    web_refresh();
     on_wifi_scan(NULL);
 }
 
 static void on_wifi_back(lv_event_t *ev) { show_settings(); }
-static void on_wifi_forget(lv_event_t *ev) { lx_net_forget(); }
+static void on_wifi_forget(lv_event_t *ev);
+
+/* The file manager runs on the launcher's network connection, on request */
+
+static void web_refresh(void)
+{
+    char buf[80] = "";
+    if (lx_web_running()) snprintf(buf, sizeof(buf), "http://%s   PIN %s", lx_net_ip(), lx_web_pin());
+    lv_label_set_text(s_web_info, buf);
+    lv_label_set_text(lv_obj_get_child(s_web_btn, 0), lx_web_running() ? "Stop file manager" : "File manager");
+}
+
+static void on_web_toggle(lv_event_t *ev)
+{
+    bool start = !lx_web_running();
+    if (!start) lx_web_stop();
+    else if (lx_net_ip()[0]) lx_web_start();        /* connected; the state may say scanning */
+    web_refresh();
+    if (start && !lx_web_running()) lv_label_set_text(s_web_info, "Connect to Wi-Fi first");
+}
 
 static void on_wifi_tz(lv_event_t *ev)
 {
@@ -879,6 +912,9 @@ static void build_wifi_screens(void)
     lv_obj_set_pos(s_wifi_status, 24, 72);
     s_wifi_scan = wifi_button(s_wifi_scr, 24, 104, 120, "Scan", on_wifi_scan);
     s_wifi_forget = wifi_button(s_wifi_scr, 160, 104, 200, "Forget network", on_wifi_forget);
+    s_web_btn = wifi_button(s_wifi_scr, 500, 14, 276, "File manager", on_web_toggle);
+    s_web_info = label(s_wifi_scr, &lv_font_montserrat_16, C_ACCENT, "");
+    lv_obj_set_pos(s_web_info, 500, 72);
     lv_obj_t *z = label(s_wifi_scr, &lv_font_montserrat_16, C_TEXT, "Time zone");
     lv_obj_set_pos(z, 390, 116);
     s_wifi_tz = lv_dropdown_create(s_wifi_scr);
@@ -955,6 +991,9 @@ static void wifi_tick(void)
     wifi_focus();
 }
 
+static lv_obj_t *s_update_btn;
+static void on_upd_check(lv_event_t *ev);
+
 static void build_settings(void)
 {
     s_settings = lv_obj_create(NULL);
@@ -995,7 +1034,7 @@ static void build_settings(void)
     lv_obj_add_event_cb(s_dev_switch, on_dev_switch, LV_EVENT_VALUE_CHANGED, NULL);
     s_map_btn = lv_button_create(s_settings);
     lv_obj_set_pos(s_map_btn, 24, 278);
-    lv_obj_set_size(s_map_btn, 370, 52);
+    lv_obj_set_size(s_map_btn, 244, 52);
     lv_obj_set_style_bg_color(s_map_btn, C_BLUE, 0);
     lv_obj_set_style_outline_width(s_map_btn, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_map_btn, C_ACCENT, LV_STATE_FOCUSED);
@@ -1004,8 +1043,8 @@ static void build_settings(void)
     lv_obj_add_event_cb(s_map_btn, on_map_start, LV_EVENT_CLICKED, NULL);
     build_map_screen();
     s_wifi_btn = lv_button_create(s_settings);
-    lv_obj_set_pos(s_wifi_btn, 406, 278);
-    lv_obj_set_size(s_wifi_btn, 370, 52);
+    lv_obj_set_pos(s_wifi_btn, 278, 278);
+    lv_obj_set_size(s_wifi_btn, 244, 52);
     lv_obj_set_style_bg_color(s_wifi_btn, C_BLUE, 0);
     lv_obj_set_style_outline_width(s_wifi_btn, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_wifi_btn, C_ACCENT, LV_STATE_FOCUSED);
@@ -1013,6 +1052,15 @@ static void build_settings(void)
     lv_obj_center(label(s_wifi_btn, &lv_font_montserrat_20, C_TEXT, LV_SYMBOL_WIFI " Wi-Fi"));
     lv_obj_add_event_cb(s_wifi_btn, on_wifi_open, LV_EVENT_CLICKED, NULL);
     build_wifi_screens();
+    s_update_btn = lv_button_create(s_settings);
+    lv_obj_set_pos(s_update_btn, 532, 278);
+    lv_obj_set_size(s_update_btn, 244, 52);
+    lv_obj_set_style_bg_color(s_update_btn, C_BLUE, 0);
+    lv_obj_set_style_outline_width(s_update_btn, 3, LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_color(s_update_btn, C_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_pad(s_update_btn, 3, LV_STATE_FOCUSED);
+    lv_obj_center(label(s_update_btn, &lv_font_montserrat_20, C_TEXT, LV_SYMBOL_DOWNLOAD " Update"));
+    lv_obj_add_event_cb(s_update_btn, on_upd_check, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *info = panel(s_settings, 24, 336, 752, 136, 14);
     s_info = label(info, &lv_font_montserrat_14, C_DIM, "");
@@ -1054,13 +1102,20 @@ static void show_settings(void)
     focus_add(s_dev_switch);
     focus_add(s_map_btn);
     focus_add(s_wifi_btn);
+    focus_add(s_update_btn);
     focus_set(s_vol_slider);
 }
+
+static uint32_t s_web_seen;     /* file manager changes already on the grid */
 
 static void show_home(void)
 {
     if (s_focused) lv_obj_remove_state(s_focused, LV_STATE_FOCUSED);    /* else it stays lit on Settings */
     lv_screen_load(s_home);
+    if (lx_web_changes() != s_web_seen) {
+        s_web_seen = lx_web_changes();
+        scan_apps();
+    }
     build_grid();
     s_focused = NULL;
     home_focus_list();
@@ -1068,7 +1123,7 @@ static void show_home(void)
 
 /* ── Folders ───────────────────────────────────────────────────────────── */
 
-enum { ACT_CLOSE, ACT_OPEN, ACT_RENAME, ACT_DELETE, ACT_DELETE_YES, ACT_PICK, ACT_OUT, ACT_NEW_MOVE, ACT_TO_FOLDER };
+enum { ACT_CLOSE, ACT_OPEN, ACT_RENAME, ACT_DELETE, ACT_DELETE_YES, ACT_PICK, ACT_OUT, ACT_NEW_MOVE, ACT_FORGET, ACT_TO_FOLDER };
 
 static lv_obj_t *s_menu, *s_menu_return;
 static char s_target[160], s_target_name[32];   /* what the menu is about */
@@ -1080,7 +1135,8 @@ static void menu_close(void)
     s_menu = NULL;
     s_long_press = false;
     s_focused = s_menu_return;
-    home_focus_list();
+    if (lv_screen_active() == s_wifi_scr) wifi_focus();
+    else home_focus_list();
 }
 
 static void menu_open(const char *title, const char *text, int items)
@@ -1108,6 +1164,16 @@ static void menu_add(const char *text, int act)
     lv_obj_add_event_cb(b, on_menu_item, LV_EVENT_CLICKED, (void *)(intptr_t)act);
     focus_add(b);
     if (s_nfocus == 1) focus_set(b);
+}
+
+/* The password can't be read back, so forgetting a network has to be asked */
+static void on_wifi_forget(lv_event_t *ev)
+{
+    char title[64];
+    snprintf(title, sizeof(title), "Forget %s?", lx_net_ssid()[0] ? lx_net_ssid() : "this network");
+    menu_open(title, "You will need its password to join again.", 2);
+    menu_add("Cancel", ACT_CLOSE);
+    menu_add("Forget", ACT_FORGET);
 }
 
 static void folder_message(const char *title, const char *text)
@@ -1278,6 +1344,7 @@ static void on_menu_item(lv_event_t *ev)
         break;
     }
     case ACT_OUT: move_app(s_target, ""); break;
+    case ACT_FORGET: lx_net_forget(); break;
     case ACT_NEW_MOVE:
         s_name_move = true;
         name_open("Name of the new folder", "New folder", PW_NEW_FOLDER);
@@ -1390,11 +1457,23 @@ static void upd_close(void)
     lv_msgbox_close(s_upd_box);
     s_upd_box = s_upd_text = NULL;
     s_focused = NULL;
-    home_focus_list();
+    if (lv_screen_active() == s_settings) show_settings();
+    else home_focus_list();
 }
 
-static void on_upd_later(lv_event_t *ev) { upd_close(); }
-static void on_upd_install(lv_event_t *ev) { s_upd_go = true; }
+static bool s_upd_online;       /* following an online update */
+
+static void on_upd_later(lv_event_t *ev)
+{
+    s_upd_online = false;
+    upd_close();
+}
+
+static void on_upd_install(lv_event_t *ev)
+{
+    if (s_upd_online) lx_update_online_download();
+    else s_upd_go = true;
+}
 
 static void upd_progress(int percent)
 {
@@ -1415,6 +1494,74 @@ static void upd_message(const char *title, const char *text)
     s_crash_box = mb;
     s_crash_ok = ok;
     focus_set(ok);
+}
+
+static void upd_box(const char *text, bool ask)
+{
+    s_upd_box = lv_msgbox_create(NULL);
+    lv_msgbox_add_title(s_upd_box, LV_SYMBOL_DOWNLOAD "  Launcher update");
+    s_upd_text = lv_msgbox_add_text(s_upd_box, text);
+    lv_obj_set_width(s_upd_box, 520);
+    if (s_focused) lv_obj_remove_state(s_focused, LV_STATE_FOCUSED);
+    focus_clear_list();
+    if (!ask) return;
+    lv_obj_t *yes = lv_msgbox_add_footer_button(s_upd_box, "Install");
+    lv_obj_t *no = lv_msgbox_add_footer_button(s_upd_box, "Later");
+    lv_obj_add_event_cb(yes, on_upd_install, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(no, on_upd_later, LV_EVENT_CLICKED, NULL);
+    focus_add(yes);
+    focus_add(no);
+    focus_set(yes);
+}
+
+static void on_upd_check(lv_event_t *ev)
+{
+    if (lx_net_state() != LX_NET_CONNECTED) {
+        upd_message("Launcher update", "Connect to Wi-Fi first.");
+        return;
+    }
+    s_upd_online = true;
+    upd_box("Checking for updates...", false);
+    lx_update_online_check();
+}
+
+static void upd_online_tick(void)
+{
+    char buf[96];
+    switch (lx_update_online_state()) {
+    case LX_ONLINE_BUSY:
+        if (lx_update_online_percent() > 0 && s_upd_text) {
+            snprintf(buf, sizeof(buf), "Downloading... %d%%", lx_update_online_percent());
+            lv_label_set_text(s_upd_text, buf);
+        }
+        break;
+    case LX_ONLINE_AVAILABLE:
+        upd_close();
+        snprintf(buf, sizeof(buf), "Install launcher %s?\nThis version: %s",
+                 lx_update_online_version(), LX_LAUNCHER_VERSION);
+        upd_box(buf, true);
+        lx_update_online_reset();
+        break;
+    case LX_ONLINE_LATEST:
+        s_upd_online = false;
+        upd_close();
+        lx_update_online_reset();
+        upd_message("Launcher update", "This is the latest version.");
+        break;
+    case LX_ONLINE_FAILED:
+        s_upd_online = false;
+        upd_close();
+        snprintf(buf, sizeof(buf), "%s", lx_update_online_error());
+        lx_update_online_reset();
+        upd_message("Launcher update", buf);
+        break;
+    case LX_ONLINE_READY:
+        s_upd_online = false;
+        lx_update_online_reset();
+        s_upd_go = true;
+        break;
+    default: break;
+    }
 }
 
 static void upd_offer(void)
@@ -1471,6 +1618,19 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px)
     lv_display_flush_ready(d);
 }
 
+#define DIM_AFTER_US   180000000LL      /* home screen left alone: dim */
+#define DIM_PERCENT    15
+static int64_t s_last_input;
+static bool s_dimmed;
+
+static void dim_tick(void)
+{
+    bool idle = esp_timer_get_time() - s_last_input > DIM_AFTER_US;
+    if (idle == s_dimmed) return;
+    s_dimmed = idle;
+    bsp_display_backlight(idle && s_brightness > DIM_PERCENT ? DIM_PERCENT : s_brightness);
+}
+
 static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
     bsp_touch_point_t p[1];
@@ -1478,6 +1638,7 @@ static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
         data->point.x = p[0].x;
         data->point.y = p[0].y;
         data->state = LV_INDEV_STATE_PRESSED;
+        s_last_input = esp_timer_get_time();
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
@@ -1489,6 +1650,7 @@ static void poll_keys(void)
 {
     papp_input_event_t ev;
     while (lx_input_poll_event(&ev)) {
+        s_last_input = esp_timer_get_time();
         int dx = 0, dy = 0, ok = 0, back = 0, menu = 0;
         if (ev.type == PAPP_EV_BUTTON_DOWN) {
             switch (ev.code) {
@@ -1561,6 +1723,63 @@ static void poll_keys(void)
     }
 }
 
+/* Select + Y anywhere: the visible picture, landscape, as a BMP on the card */
+static void screenshot(void)
+{
+    const bsp_info_t *b = bsp_info();
+    int pw = b->display_w, ph = b->display_h, rot = b->display_rot;
+    int w = rot == 90 || rot == 270 ? ph : pw, h = rot == 90 || rot == 270 ? pw : ph;
+    int stride = (w * 2 + 3) & ~3;
+    char path[48];
+    struct stat st;
+    mkdir("/sd/screenshots", 0775);
+    for (int i = 1; i < 1000; i++) {
+        snprintf(path, sizeof(path), "/sd/screenshots/shot_%03d.bmp", i);
+        if (stat(path, &st) != 0) break;
+    }
+    uint16_t *row = heap_caps_calloc(1, stride, MALLOC_CAP_SPIRAM);
+    FILE *f = row ? fopen(path, "wb") : NULL;
+    if (!f) {
+        free(row);
+        return;
+    }
+    uint32_t hdr[16] = { 0 };           /* from byte 2: the 2-byte magic comes first */
+    uint32_t image = (uint32_t)stride * h;
+    hdr[0] = 66 + image;                /* file size */
+    hdr[2] = 66;                        /* pixels offset */
+    hdr[3] = 40;                        /* BITMAPINFOHEADER */
+    hdr[4] = w;
+    hdr[5] = h;                         /* positive: bottom row first */
+    hdr[6] = 1 | (16u << 16);           /* planes, bits */
+    hdr[7] = 3;                         /* BI_BITFIELDS */
+    hdr[8] = image;
+    hdr[13] = 0xF800;
+    hdr[14] = 0x07E0;
+    hdr[15] = 0x001F;
+    fwrite("BM", 1, 2, f);
+    fwrite(hdr, 4, 16, f);
+    const uint16_t *px = bsp_display_fb(bsp_display_visible());
+    for (int y = h - 1; y >= 0; y--) {
+        for (int x = 0; x < w; x++) {
+            row[x] = rot == 270 ? px[x * pw + (h - 1 - y)] : rot == 90 ? px[(w - 1 - x) * pw + y] : px[y * pw + x];
+        }
+        fwrite(row, 1, stride, f);
+    }
+    fclose(f);
+    free(row);
+    ESP_LOGI(TAG, "saved %s", path);
+}
+
+static void screenshot_tick(void)
+{
+    static bool held;
+    papp_gamepad_t g = { 0 };
+    lx_input_gamepad(0, &g);
+    bool now = (g.buttons & (PAPP_BTN_SELECT | PAPP_BTN_Y)) == (PAPP_BTN_SELECT | PAPP_BTN_Y);
+    if (now && !held) screenshot();
+    held = now;
+}
+
 static void launch(const char *path)
 {
     char err[160];
@@ -1583,6 +1802,9 @@ static void home_task(void *arg)
             confirmed = true;
         }
         if (lx_app_state() != LX_APP_IDLE) {
+            s_last_input = esp_timer_get_time();
+            if (s_dimmed) dim_tick();
+            screenshot_tick();
             if (!was_running) {
                 lx_net_pause(true);
                 char p[128];                              /* also apps started over DevLink */
@@ -1609,10 +1831,21 @@ static void home_task(void *arg)
             offered = true;
             upd_offer();
         }
+        dim_tick();
+        screenshot_tick();
         if (s_map_step >= 0) map_tick();
         else poll_keys();
         wifi_tick();
+        if (lx_web_changes() != s_web_seen && lv_screen_active() == s_home &&
+            lv_obj_get_child_count(lv_layer_top()) == 0) {            /* not under a menu or message */
+            s_web_seen = lx_web_changes();
+            const app_entry_t *e = s_focused ? lv_obj_get_user_data(s_focused) : NULL;
+            char keep[160] = "";
+            if (e) snprintf(keep, sizeof(keep), "%s", e->path);
+            home_view(keep[0] ? keep : NULL);
+        }
         uint32_t wait = lv_timer_handler();
+        if (s_upd_online) upd_online_tick();
         if (s_upd_go) upd_install();
         if (s_launch[0]) {
             char path[160];

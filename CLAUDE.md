@@ -24,6 +24,7 @@ components/lx_input/      input manager: USB HID gamepads/keyboards + board butt
                           lx_hid_parse = HID descriptor parser; per-pad button mapping in NVS ("padmap")
 components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm
 components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17)
+components/lx_web/        Wi-Fi file manager: web page for the SD card, on request, with a PIN per start
 papp-sdk/                 App SDK: include/papp/papp.h, runtime/ (crt0, libc glue), ld/papp.ld,
                           tools/papp_build.py, tools/papp_pack.py
 apps/                     Test/demo apps (hello, libc_test, gfx_demo: DISP test, args w h mode secs bufs;
@@ -44,7 +45,9 @@ apps/common/icons/        88x88 icons of the emulator apps (emubuild copies <app
 apps/common/v1compat/     v1 `app_services_t` host on the SDK + v1build.py: the RetroESP32 v1 PSRAM games
                           doom, opentyrian, quake, duke3d build with their own glue unchanged; frames go to the PPA without a copy (DISP v3 `present_ext`)
 tools/papp_dev.py         DevLink host tool
+tools/make_release.py     Release files for Settings → Update: launcher.bin + latest.json, prints the gh command
 tests/host/test_reloc.py  Host relocation equivalence test
+tests/board/smoke.py      Board regression: relocation test, test apps, crash record
 ```
 
 ## Environment
@@ -71,7 +74,8 @@ folder (PNG, square, best 88x88, transparency OK; corners are rounded by the lau
 command also sets the board clock from the PC.
 `deploy` = upload to `/sd/apps/<name>/<name>.papp` → run → stream logs → exit code of the app
 (124 timeout). `shot out.png` = screenshot of the visible framebuffer, in landscape (open it to see
-the screen). Other commands: `info ls stat put get rm mkdir mv run stop status log reboot crash-clear`.
+the screen). Other commands: `info ls stat put get rm mkdir mv run stop status log reboot crash-clear`;
+`net [--quick|--scan]` = network self-test on the board (link, pings, TCP, DNS, nearby networks).
 Input without touching the board: `input state [--watch 10]`, `input pad A+START [--hold ms]`,
 `input key ENTER`, `input text "hi"`, or timed during a run: `deploy app.papp --inject 500:pad:A --inject 900:text:hi`.
 

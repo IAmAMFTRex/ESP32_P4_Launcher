@@ -13,6 +13,12 @@ GB/GBC, PCE and Spectrum also save the state on Exit game (as in RetroESP32), ov
 | NTP | Pick a time zone, then check the clock is right after a power cycle |
 | USB pads | Any non-Sony pad: buttons and sticks, then Settings → Map controller, then unplug and replug |
 | Battery | Is a cell fitted? Does the percentage track charge and discharge? |
+| Wi-Fi | Join again: the saved password was erased. Prefer a stronger network than `NETGEAR98` (-81 dBm) |
+| Online update | Settings → Update on a network with internet: expect "No release has been published yet" |
+| File manager | Wi-Fi screen → File manager, then open the address from a phone with the PIN. Try browse, download, upload, new folder, delete |
+| Forget network | Confirm that it asks first and Cancel keeps the network |
+| Idle dimming | Leave the home screen for 3 minutes. It should dim, and any touch or button restores it |
+| Screenshot | Select + Y on the DualShock 3, on the home screen and in a game |
 | Folders | Top right New folder, type a name. Hold an app to move it in, open the folder, start the app, press Back. Hold the folder to rename and delete it |
 | Clock | Clock, stopwatch, timer and its beep |
 | Files | Browse, details, preview. Delete only on a file you don't need |

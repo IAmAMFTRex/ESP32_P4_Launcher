@@ -42,6 +42,11 @@ void lx_net_forget(void);
 /* While an app runs the radio is stopped, so it can't cost the app anything */
 void lx_net_pause(bool pause);
 
+/* Network self-test for DevLink: route, ping, TCP, DNS; text grows while busy */
+void lx_net_diag_start(int mode);           /* 1 all, 2 link and gateway ping, 3 also scan */
+bool lx_net_diag_busy(void);
+const char *lx_net_diag_text(void);
+
 int         lx_net_tz_count(void);
 const char *lx_net_tz_name(int index);
 int         lx_net_tz_get(void);            /* 0 = not set: clock shown as DevLink set it */

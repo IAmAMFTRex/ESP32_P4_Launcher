@@ -24,3 +24,23 @@ bool lx_update_available(char *version, size_t len);
 /* Flash the file and select it for the next boot; progress in percent. The
  * caller restarts. The file is renamed first, so it can't be offered again. */
 esp_err_t lx_update_install(void (*progress)(int percent));
+
+/* Online update from the newest GitHub release. Both calls run in the background;
+ * follow them with lx_update_online_state(). READY means the checked file is in
+ * LX_UPDATE_FILE, for lx_update_install(). */
+typedef enum {
+    LX_ONLINE_IDLE,
+    LX_ONLINE_BUSY,
+    LX_ONLINE_LATEST,       /* nothing newer */
+    LX_ONLINE_AVAILABLE,    /* lx_update_online_version() is newer */
+    LX_ONLINE_READY,
+    LX_ONLINE_FAILED,       /* reason: lx_update_online_error() */
+} lx_online_state_t;
+
+void lx_update_online_check(void);
+void lx_update_online_download(void);
+lx_online_state_t lx_update_online_state(void);
+void lx_update_online_reset(void);          /* result read: back to IDLE */
+int lx_update_online_percent(void);
+const char *lx_update_online_version(void);
+const char *lx_update_online_error(void);

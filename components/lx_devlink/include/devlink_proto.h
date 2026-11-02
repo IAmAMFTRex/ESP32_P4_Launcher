@@ -38,6 +38,7 @@ enum {
     DL_CRASH       = 0x41,   /*                               -> JSON            */
     DL_CRASH_CLEAR = 0x42,
     DL_SHOT        = 0x50,   /* u32 offset, u32 max          -> dl_shot_hdr_t + bytes */
+    DL_NET         = 0x52,   /* [mode: start] -> busy flag + text of the network test */
     DL_INPUT       = 0x51,   /* dl_input_* request; STATE      -> JSON            */
     DL_LOG         = 0x70,   /* async: text                                      */
     DL_EVENT       = 0x71,   /* async: JSON                                      */

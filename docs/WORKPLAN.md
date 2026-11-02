@@ -7,7 +7,7 @@
 
 ---
 
-## Status (2026-11-01, launcher 0.18.0: self-update, any-HID pads + mapping, Wi-Fi + NTP, battery, Clock, Files, folders)
+## Status (2026-11-02, launcher 0.19.1: online update, Wi-Fi file manager, screenshots, idle dimming; 0.18: folders)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -79,7 +79,7 @@ New services follow the existing rules: interfaces are appended and versioned, a
 | B2 | File browser: **first cut, 0.17** | — | `apps/files` PAPP: browse all of SD, details, text preview, delete with confirm (default Cancel). Rename, copy and open-with are missing |
 | B3 | File associations | S | Manifest list (`.nes`, `.sfc`, …), which B2 and any future library use |
 | B4 | Clock: **done, 0.17** | — | `apps/clock` PAPP: clock, stopwatch, timer. SYS v2 `papp_local_time`. Alarms are not done |
-| B5 | Sleep and power | M | Dim and sleep on idle, wake on button. Matters once A6 shows battery life |
+| B5 | Sleep and power: **dimming done, 0.19** | S | The home screen dims to 15% after 3 minutes and any input restores it. Not seen on the panel yet. Sleep and wake are not done |
 
 **Clock: both, split by job.** Time itself belongs to the launcher: the home screen needs it, and NTP, time zone
 and any RTC must not depend on an app. A full Clock (alarm, timer, stopwatch, big-screen face) should be a
@@ -93,8 +93,8 @@ the clock is lost at power-off, so check whether the board has an RTC.
 |---|---|---|---|
 | C0 | **Spike: radio bring-up: done 2026-11-01** | — | See results below |
 | C0b | Match host and C6 firmware: **done** | — | `esp_hosted` pinned to ~2.0 (2.0.17, same as the C6): mismatch gone. The C6 reports BLE, so C4 needs no C6 update |
-| C1 | Wi-Fi service + Settings: **code done, 0.16** | — | `components/lx_net`: scan, password (touch or USB keyboard), saved network, status. Radio stays off until used. Scan tested. **Connecting has never been tested** |
-| C2 | NTP + time zone: **code done, 0.16** | — | Zone picker in the Wi-Fi screen. NTP is **untested**, as it needs a connection |
+| C1 | Wi-Fi service + Settings: **done, 0.16, fixed 0.19** | — | `components/lx_net`. Joining and rejoining a saved network work on the board. A saved network now keeps retrying, a scan works during a join, and DNS has 1.1.1.1 as backup. `NETGEAR98` is -81 dBm here, and joins took 9 to over 90 s |
+| C2 | NTP + time zone: **code done, 0.16** | — | Zone picker in the Wi-Fi screen. NTP is **unconfirmed**: the board has not reached the internet, and DevLink also sets the clock |
 | C3 | NET interface for apps | M–L | Optional sockets for PAPPs, tracked for teardown. Only when an app needs it |
 | C4 | BLE HID controllers | L | NimBLE on the P4 through the C6, pairing screen, feeds `lx_input` as another pad source. Reuses A1 and A2, so it comes after them |
 | C5 | Radio during games: **interim, 0.16** | S | Stopped while an app runs and resumed after (tested with the radio up, not connected). Measure the real cost before changing this |
@@ -115,7 +115,7 @@ the clock is lost at power-off, so check whether the board has an RTC.
 |---|---|---|---|
 | D1 | Update from SD: **done, 0.13** | — | `/sd/update/launcher.bin` is offered at boot. Good image tested, survives a reboot. Must be built after this feature, as the version is in the image |
 | D2 | App rollback safety: **done, 0.13** | — | Confirmed after 10 s. A build crashing at boot returned to the previous version by itself and the failure was shown once |
-| D3 | OTA from GitHub Releases | M | Read `latest.json` over HTTPS, compare versions, download, check SHA-256, flash. Needs C1 |
+| D3 | OTA from GitHub Releases: **client done, 0.19** | — | Settings → Update reads `latest.json` from the newest release, downloads to the SD card, checks SHA-256 and installs with rollback. Tested over loopback, including a wrong hash. **Real HTTPS to GitHub is untested** (no internet on this network), and no release is published. `/sd/update/ota_url.txt` overrides the address |
 | D4 | CI release builds | M | GitHub Actions builds the launcher and apps, then publishes a release |
 | D5 | Signed updates | M | Verify a signature, not just a hash. Do it before promoting OTA widely |
 | D6 | App updates / catalog | M | Same manifest also lists `.papp` files. Respect each core's license when publishing binaries |
@@ -125,11 +125,11 @@ the clock is lost at power-off, so check whether the board has an RTC.
 | Item | Size | Why |
 |---|---|---|
 | Launcher in-game overlay | M | One HOME menu for every app: volume, brightness, screenshot, quit. Replaces per-app touch edges |
-| Wi-Fi file manager (web page) | M | Upload ROMs from a phone or PC without removing the SD card. Needs C1, and may be the best use of Wi-Fi |
+| Wi-Fi file manager (web page): **code done, 0.19** | — | `components/lx_web`, started from the Wi-Fi screen, PIN per start. Only file download has run, over loopback. **The page, upload, delete and new folder are untested** |
 | Game library with cover art | L | Browse games across systems, using `.papp` associations (B3) |
-| Screenshot button | S | Save to SD from anywhere; DevLink already has the capture code |
+| Screenshot button: **done, 0.19** | — | Select + Y saves `/sd/screenshots/shot_NNN.bmp`, tested inside Clock. Can catch a frame mid-update |
 | DevLink over Wi-Fi | S–M | Develop without the cable |
-| Automated regression run | M | The scripts from the test passes as `tests/board/`, run per release. Would have caught the forced-stop bug |
+| Automated regression run: **first cut, 0.19** | M | `tests/board/smoke.py` runs the relocation test and 4 test apps, and checks for a stored crash. Emulators and forced stop are not covered yet |
 | Conformance test app | M | Exercises every interface, for new boards (Phase 8) |
 | HDMI board support | M | The reference has it, and it is the first real test of board portability |
 | L2 cache size experiment | S | May speed up Quake and others, at a cost in internal RAM |
@@ -138,14 +138,13 @@ the clock is lost at power-off, so check whether the board has an RTC.
 
 ### Suggested order
 
-1. **Now:** finish hands-on testing, then enter a Wi-Fi network to test C1, C2 and C5.
+1. **Now:** finish hands-on testing, then join a stronger Wi-Fi network to test D3, C2 and the file manager.
 2. **Input:** try real pads against A1 and A4, then A3.
 3. **Everyday features:** B3, finish B2, overlay.
-4. **Radio:** D3, Wi-Fi file manager, C4, D4, D5.
+4. **Radio:** D4, D5, C4.
 
 ### Open decisions
 
-- What "folders" means: grouping on the home screen (assumed in B1), or something else?
 - Is there a battery fitted, and which cell?
 - Which BLE pads matter most? This decides how much of C4 is worth building.
 - Is the radio allowed to run during games?

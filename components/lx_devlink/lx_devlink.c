@@ -12,6 +12,7 @@
 #include "lx_common.h"
 #include "bsp.h"
 #include "lx_input.h"
+#include "lx_net.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -194,6 +195,8 @@ static void h_info(uint16_t seq)
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM), app_state_name());
     jstr(&j, lx_app_path());
+    jcat(&j, ",\"net_state\":%d,\"ip\":", (int)lx_net_state());
+    jstr(&j, lx_net_ip());
     jcat(&j, ",\"reset_reason\":%d}", (int)esp_reset_reason());
     reply(DL_INFO, seq, j.buf, j.len);
 }
@@ -549,6 +552,14 @@ static void dispatch(uint8_t type, uint16_t seq, uint8_t *p, uint32_t len)
     case DL_CRASH: h_crash(seq); break;
     case DL_SHOT: h_shot(seq, p, len); break;
     case DL_INPUT: h_input(seq, p, len); break;
+    case DL_NET: {
+        if (len && p[0]) lx_net_diag_start(p[0]);
+        static char text[1600];
+        text[0] = lx_net_diag_busy() ? '1' : '0';
+        snprintf(text + 1, sizeof(text) - 1, "%s", lx_net_diag_text());
+        reply_str(type, seq, text);
+        break;
+    }
     case DL_CRASH_CLEAR:
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
         esp_core_dump_image_erase();
