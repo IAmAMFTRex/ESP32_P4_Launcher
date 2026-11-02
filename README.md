@@ -13,7 +13,7 @@ Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
 | Launcher version | App ABI | Toolchain | First board |
 |---|---|---|---|
-| 0.19.1 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800) |
+| 0.20.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -115,6 +115,7 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - Battery level in the system bar
 - Wi-Fi file manager: a web page for the SD card, started from the Wi-Fi screen and protected by a PIN
 - Screenshots: Select + Y saves a BMP to `/sd/screenshots`
+- In-game menu: HOME pauses any game for volume, a screenshot or quitting
 
 **Applications** (all built from this repository)
 
@@ -253,7 +254,7 @@ player 1.
 | SNES, Genesis, Neo Geo | X and Y are game buttons, so tap the **left** screen edge for the menu and the **right** edge for volume |
 | Doom, OpenTyrian | X is the game's own menu, hold X for 3 s to exit |
 | Quake, Duke Nukem 3D | Tap the left edge for the menu, the right edge for volume, hold the left edge for 3 s to exit |
-| Anywhere | HOME, or holding Select+Start for 1 s, asks the app to exit |
+| Anywhere | HOME, or holding Select+Start for 1 s, pauses the game under a menu: Resume, Volume, Screenshot, Quit to home. In the ROM browser it quits the app |
 
 Choosing **Exit game** in an emulator returns to its ROM browser. Leaving the browser returns to the home screen.
 

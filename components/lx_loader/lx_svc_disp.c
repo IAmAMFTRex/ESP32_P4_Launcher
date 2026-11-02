@@ -43,6 +43,7 @@ static void *disp_lock(papp_surface_t *s, int *stride_px)
  * video thread would present back to back and never be seen outside a service. */
 static int disp_present(papp_surface_t *s, uint32_t flags)
 {
+    lx_overlay_poll();
     if (lx_svc_exit_flag) return -1;
     SVC_ENTER();
     int r = lx_comp_present((lx_surface_t *)s) == ESP_OK ? 0 : -1;
@@ -52,6 +53,7 @@ static int disp_present(papp_surface_t *s, uint32_t flags)
 
 static int disp_present_ext(papp_surface_t *s, const void *pixels, uint32_t flags)
 {
+    lx_overlay_poll();
     if (lx_svc_exit_flag) return -1;
     SVC_ENTER();
     int r = lx_comp_present_ext((lx_surface_t *)s, pixels) == ESP_OK ? 0 : -1;

@@ -43,6 +43,7 @@ struct lx_audio_stream {
 static lx_audio_stream_t s_streams[LX_AUDIO_MAX_STREAMS];
 static SemaphoreHandle_t s_lock, s_wake;
 static int s_rate, s_master = 60;
+static volatile bool s_hold;        /* every stream silent: launcher overlay */
 static int32_t s_mix[BLOCK_FRAMES * 2];
 static int16_t s_out[BLOCK_FRAMES * 2];
 
@@ -83,7 +84,7 @@ static void mixer_task(void *arg)
             lx_audio_stream_t *s = &s_streams[i];
             if (!s->used) continue;
             any = true;
-            if (s->paused) continue;
+            if (s->paused || s_hold) continue;
             uint32_t before = s->tail;
             render(s, BLOCK_FRAMES);
             if (s->tail != before) xSemaphoreGive(s->space);
@@ -125,6 +126,11 @@ void lx_audio_master_volume(int percent)
 {
     s_master = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     bsp_audio_volume(s_master);
+}
+
+void lx_audio_hold(bool hold)
+{
+    s_hold = hold;
 }
 
 int lx_audio_master_volume_get(void)

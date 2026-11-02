@@ -1738,48 +1738,7 @@ static void poll_keys(void)
 /* Select + Y anywhere: the visible picture, landscape, as a BMP on the card */
 static void screenshot(void)
 {
-    const bsp_info_t *b = bsp_info();
-    int pw = b->display_w, ph = b->display_h, rot = b->display_rot;
-    int w = rot == 90 || rot == 270 ? ph : pw, h = rot == 90 || rot == 270 ? pw : ph;
-    int stride = (w * 2 + 3) & ~3;
-    char path[48];
-    struct stat st;
-    mkdir("/sd/screenshots", 0775);
-    for (int i = 1; i < 1000; i++) {
-        snprintf(path, sizeof(path), "/sd/screenshots/shot_%03d.bmp", i);
-        if (stat(path, &st) != 0) break;
-    }
-    uint16_t *row = heap_caps_calloc(1, stride, MALLOC_CAP_SPIRAM);
-    FILE *f = row ? fopen(path, "wb") : NULL;
-    if (!f) {
-        free(row);
-        return;
-    }
-    uint32_t hdr[16] = { 0 };           /* from byte 2: the 2-byte magic comes first */
-    uint32_t image = (uint32_t)stride * h;
-    hdr[0] = 66 + image;                /* file size */
-    hdr[2] = 66;                        /* pixels offset */
-    hdr[3] = 40;                        /* BITMAPINFOHEADER */
-    hdr[4] = w;
-    hdr[5] = h;                         /* positive: bottom row first */
-    hdr[6] = 1 | (16u << 16);           /* planes, bits */
-    hdr[7] = 3;                         /* BI_BITFIELDS */
-    hdr[8] = image;
-    hdr[13] = 0xF800;
-    hdr[14] = 0x07E0;
-    hdr[15] = 0x001F;
-    fwrite("BM", 1, 2, f);
-    fwrite(hdr, 4, 16, f);
-    const uint16_t *px = bsp_display_fb(bsp_display_visible());
-    for (int y = h - 1; y >= 0; y--) {
-        for (int x = 0; x < w; x++) {
-            row[x] = rot == 270 ? px[x * pw + (h - 1 - y)] : rot == 90 ? px[(w - 1 - x) * pw + y] : px[y * pw + x];
-        }
-        fwrite(row, 1, stride, f);
-    }
-    fclose(f);
-    free(row);
-    ESP_LOGI(TAG, "saved %s", path);
+    lx_comp_screenshot(NULL, 0);
 }
 
 static void screenshot_tick(void)

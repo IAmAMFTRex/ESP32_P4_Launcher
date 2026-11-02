@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "bsp.h"
@@ -61,6 +62,8 @@ uint16_t *lx_comp_takeover_begin(void);
 esp_err_t lx_comp_launcher_present(const uint16_t *frame);
 /* Copies what is on screen into dst (a buffer from *_begin), to draw on top of it. */
 void      lx_comp_copy_visible(uint16_t *dst);
+/* The visible picture, landscape, as /sd/screenshots/shot_NNN.bmp; path (may be NULL) gets its name. */
+esp_err_t lx_comp_screenshot(char *path, size_t len);
 
 #ifdef __cplusplus
 }

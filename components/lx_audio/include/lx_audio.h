@@ -34,6 +34,7 @@ esp_err_t lx_audio_init(void);          /* after bsp_audio_init() */
 int       lx_audio_output_rate(void);
 void      lx_audio_master_volume(int percent);
 int       lx_audio_master_volume_get(void);
+void      lx_audio_hold(bool hold);     /* silence every stream; their rings keep what is queued */
 
 lx_audio_stream_t *lx_audio_open(int rate, int channels, lx_audio_fmt_t fmt, int latency_ms);
 void   lx_audio_close(lx_audio_stream_t *s);

@@ -401,6 +401,7 @@ const papp_iface_hdr_t *lx_svc_find(uint32_t id, uint16_t min_version)
 void lx_svc_begin_run(void)
 {
     lx_svc_exit_flag = false;
+    lx_overlay_reset();
     lx_input_flush();           /* the app sees only input from its own run */
     lx_svc_busy_count = 0;
     memset(s_files, 0, sizeof(s_files));

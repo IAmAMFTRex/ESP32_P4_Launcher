@@ -7,7 +7,7 @@
 
 ---
 
-## Status (2026-11-02, launcher 0.19.1: online update, Wi-Fi file manager, screenshots, idle dimming; 0.18: folders)
+## Status (2026-11-02, launcher 0.20.0: in-game menu; 0.19: online update, Wi-Fi file manager, screenshots, idle dimming; 0.18: folders)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -124,7 +124,7 @@ the clock is lost at power-off, so check whether the board has an RTC.
 
 | Item | Size | Why |
 |---|---|---|
-| Launcher in-game overlay | M | One HOME menu for every app: volume, brightness, screenshot, quit. Replaces per-app touch edges |
+| Launcher in-game overlay: **done, 0.20** | — | HOME (or Select+Start held 1 s) pauses the game under a menu: Resume, Volume, Screenshot, Quit to home. Opened by the app's next present, so the game is frozen and its sound held. In a launcher screen (ROM browser) or an app that never presents, HOME quits as before. Tested in NES and Doom. Brightness is not in it yet |
 | Wi-Fi file manager (web page): **code done, 0.19** | — | `components/lx_web`, started from the Wi-Fi screen, PIN per start. Only file download has run, over loopback. **The page, upload, delete and new folder are untested** |
 | Game library with cover art | L | Browse games across systems, using `.papp` associations (B3) |
 | Screenshot button: **done, 0.19** | — | Select + Y saves `/sd/screenshots/shot_NNN.bmp`, tested inside Clock. Can catch a frame mid-update |

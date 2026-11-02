@@ -39,5 +39,9 @@ void lx_thrd_suspend_all(bool suspend);    /* app threads only, not the main tas
 int  lx_thrd_kill_all(void);               /* -> threads that were still alive */
 int  lx_thrd_end_run(void);                /* -> sync objects freed */
 
+/* In-game overlay (lx_svc_ui.c): presents open it when HOME asked for it */
+void lx_overlay_poll(void);
+void lx_overlay_reset(void);
+
 /* Ends the run from any app thread with `code` (lx_app.c). */
 void lx_app_post_exit(int code);

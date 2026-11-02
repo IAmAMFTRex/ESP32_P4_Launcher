@@ -8,7 +8,10 @@
  */
 #include "lx_comp.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "driver/ppa.h"
 #include "esp_cache.h"
 #include "esp_heap_caps.h"
@@ -346,6 +349,54 @@ void lx_comp_copy_visible(uint16_t *dst)
     size_t bytes = (size_t)b->display_w * b->display_h * 2;
     uint16_t *src = bsp_display_fb(bsp_display_visible());
     if (src != dst) memcpy(dst, src, bytes);
+}
+
+esp_err_t lx_comp_screenshot(char *path, size_t len)
+{
+    const bsp_info_t *b = bsp_info();
+    int pw = b->display_w, ph = b->display_h, rot = b->display_rot;
+    int w = rot == 90 || rot == 270 ? ph : pw, h = rot == 90 || rot == 270 ? pw : ph;
+    int stride = (w * 2 + 3) & ~3;
+    char name[48];
+    struct stat st;
+    mkdir("/sd/screenshots", 0775);
+    for (int i = 1; i < 1000; i++) {
+        snprintf(name, sizeof(name), "/sd/screenshots/shot_%03d.bmp", i);
+        if (stat(name, &st) != 0) break;
+    }
+    uint16_t *row = heap_caps_calloc(1, stride, MALLOC_CAP_SPIRAM);
+    FILE *f = row ? fopen(name, "wb") : NULL;
+    if (!f) {
+        free(row);
+        return ESP_FAIL;
+    }
+    uint32_t hdr[16] = { 0 };           /* from byte 2: the 2-byte magic comes first */
+    uint32_t image = (uint32_t)stride * h;
+    hdr[0] = 66 + image;                /* file size */
+    hdr[2] = 66;                        /* pixels offset */
+    hdr[3] = 40;                        /* BITMAPINFOHEADER */
+    hdr[4] = w;
+    hdr[5] = h;                         /* positive: bottom row first */
+    hdr[6] = 1 | (16u << 16);           /* planes, bits */
+    hdr[7] = 3;                         /* BI_BITFIELDS */
+    hdr[8] = image;
+    hdr[13] = 0xF800;
+    hdr[14] = 0x07E0;
+    hdr[15] = 0x001F;
+    fwrite("BM", 1, 2, f);
+    fwrite(hdr, 4, 16, f);
+    const uint16_t *px = bsp_display_fb(bsp_display_visible());
+    for (int y = h - 1; y >= 0; y--) {
+        for (int x = 0; x < w; x++) {
+            row[x] = rot == 270 ? px[x * pw + (h - 1 - y)] : rot == 90 ? px[(w - 1 - x) * pw + y] : px[y * pw + x];
+        }
+        fwrite(row, 1, stride, f);
+    }
+    fclose(f);
+    free(row);
+    ESP_LOGI(TAG, "saved %s", name);
+    if (path) snprintf(path, len, "%s", name);
+    return ESP_OK;
 }
 
 void lx_comp_launcher_end(void)

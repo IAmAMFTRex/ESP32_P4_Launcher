@@ -49,6 +49,11 @@ esp_err_t lx_app_launch(const char *path, int argc, const char *const *argv,
 /* Ask the running app to exit; force-stop it after grace_ms. Non-blocking. */
 esp_err_t lx_app_stop(uint32_t grace_ms);
 
+/* HOME during a run: asks for the in-game menu, which the app's next present
+ * opens. False when it can't come up (the app is in a launcher screen, or never
+ * presented since the last request): then the caller stops the app. */
+bool lx_app_overlay_request(void);
+
 lx_app_state_t lx_app_state(void);
 const char    *lx_app_path(void);          /* "" when idle */
 uint32_t       lx_app_exec_base(void);     /* 0 when idle  */

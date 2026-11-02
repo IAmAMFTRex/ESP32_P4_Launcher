@@ -55,10 +55,10 @@ static void play_chime(void)
     ESP_LOGI(TAG, "audio: %d Hz, %d ms chime took %d ms", rate, (int)(done * 1000 / rate), ms);
 }
 
-/* HOME (or Select+Start held) — until the overlay menu exists, it quits the app. */
+/* HOME (or Select+Start held): the in-game menu, or quit when it can't come up */
 static void on_system_input(lx_input_sys_t ev)
 {
-    if (ev == LX_INPUT_SYS_HOME && lx_app_state() == LX_APP_RUNNING) {
+    if (ev == LX_INPUT_SYS_HOME && lx_app_state() == LX_APP_RUNNING && !lx_app_overlay_request()) {
         ESP_LOGI(TAG, "HOME: stopping %s", lx_app_path());
         lx_app_stop(2000);
     }
