@@ -14,6 +14,7 @@
  * the stream's gain and is kept in /sd/odroid/data/volume.
  */
 #include "papp/papp.h"
+#include "odroid_menu.h"
 
 #include <ctype.h>
 #include <setjmp.h>
@@ -375,8 +376,11 @@ static void poll_touch(void)
     const papp_if_disp_t *d = papp_if_disp();
     s_touch_zone = 0;
     if (d && d->hdr.version >= 2 && d->touch_read(NULL, &p, 1) > 0) {
-        if (p.x < TOUCH_MENU_X) s_touch_zone = -1;
-        else if (p.x > TOUCH_VOL_X) s_touch_zone = 1;
+        papp_disp_info_t info = { .width = 800 };
+        papp_disp_info(&info);
+        int w = info.width;                             /* the zones were drawn for 800 wide */
+        if (p.x < TOUCH_MENU_X * w / 800) s_touch_zone = -1;
+        else if (p.x > TOUCH_VOL_X * w / 800) s_touch_zone = 1;
     }
 }
 
@@ -463,9 +467,11 @@ static int volume_load(void)
     return s_volume;
 }
 
+/* The launcher's master volume sets the level (odroid_emu_volume); the odroid
+ * levels the cores used to step through are no longer applied */
 static void volume_apply(void)
 {
-    if (s_stream) papp_audio_set_gain(s_stream, volume_load() * 100 / (ODROID_VOLUME_LEVEL_COUNT - 1));
+    if (s_stream) papp_audio_set_gain(s_stream, 100);
 }
 
 void odroid_audio_init(int rate)
@@ -505,6 +511,72 @@ void odroid_audio_volume_change(void)
 {
     odroid_audio_volume_set((volume_load() + 1) % ODROID_VOLUME_LEVEL_COUNT);
     odroid_settings_Volume_set(s_volume);
+}
+
+/* ── In-game menu (odroid_menu.h) ──────────────────────────────────────── */
+
+/* Waits (up to 1 s) until no button is held and the screen isn't touched, so the
+ * press that opened or closed a dialog reaches neither the dialog nor the game */
+static void wait_release(void)
+{
+    const papp_if_disp_t *d = papp_if_disp();
+    for (int t = 0; t < 100; t++) {
+        papp_gamepad_t g;
+        papp_touch_point_t p;
+        bool held = papp_input_gamepad(0, &g) && g.buttons;
+        if (!held && d && d->hdr.version >= 2 && d->touch_read(NULL, &p, 1) > 0) held = true;
+        if (!held) break;
+        papp_delay_ms(10);
+    }
+    s_touch_zone = 0;
+    s_touch_polled = 0;
+}
+
+static void dialog_begin(void)
+{
+    wait_release();
+    if (s_stream) papp_audio_pause(s_stream, true);
+}
+
+static void dialog_end(void)
+{
+    if (s_stream) papp_audio_pause(s_stream, false);
+    wait_release();
+}
+
+emu_menu_action_t odroid_emu_menu(const char *note, unsigned flags)
+{
+    const char *items[7];
+    emu_menu_action_t ids[7];
+    int n = 0;
+    bool can_save = !(flags & EMU_MENU_NO_SAVE), saved = can_save && (flags & EMU_MENU_HAS_SAVE);
+    items[n] = "Resume game";       ids[n++] = EMU_MENU_RESUME;
+    if (can_save) { items[n] = "Save game";       ids[n++] = EMU_MENU_SAVE; }
+    if (saved)    { items[n] = "Load saved game"; ids[n++] = EMU_MENU_LOAD; }
+    if (!(flags & EMU_MENU_NO_RESTART)) { items[n] = "Restart game"; ids[n++] = EMU_MENU_RESTART; }
+    if (saved)    { items[n] = "Delete save";     ids[n++] = EMU_MENU_DELETE; }
+    int volume = n;
+    items[n] = "Volume";            ids[n++] = EMU_MENU_RESUME;
+    items[n] = "Exit game";         ids[n++] = EMU_MENU_EXIT;
+
+    char title[48];
+    if (note) snprintf(title, sizeof(title), "Game menu - %s", note);
+    else snprintf(title, sizeof(title), "Game menu");
+    dialog_begin();
+    int k, at = 0;
+    while ((k = papp_ui_menu(title, items, n, at)) == volume) {
+        papp_ui_volume();
+        at = volume;                                    /* back on Volume */
+    }
+    dialog_end();
+    return k < 0 ? EMU_MENU_RESUME : ids[k];
+}
+
+void odroid_emu_volume(void)
+{
+    dialog_begin();
+    papp_ui_volume();
+    dialog_end();
 }
 
 /* ── Settings ──────────────────────────────────────────────────────────── */

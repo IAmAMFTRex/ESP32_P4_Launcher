@@ -12,6 +12,7 @@
  * against another server.
  */
 #include "lx_update.h"
+#include "lx_http.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,8 +22,6 @@
 #include "bsp.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
-#include "esp_crt_bundle.h"
-#include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -33,7 +32,7 @@ static const char *TAG = "lx_update";
 #define MANIFEST_URL  "https://github.com/giltal/ESP32_P4_Launcher/releases/latest/download/latest.json"
 #define URL_OVERRIDE  "/sd/update/ota_url.txt"
 #define TMP_FILE      "/sd/update/launcher.tmp"
-#define MANIFEST_MAX  2048
+#define MANIFEST_MAX  4096
 #define CHUNK         4096
 
 static volatile lx_online_state_t s_state;
@@ -56,77 +55,13 @@ static void fail(const char *text)
     s_state = LX_ONLINE_FAILED;
 }
 
-/* Opens url, following redirects. Returns the HTTP status, or -1 */
-static int http_open(esp_http_client_handle_t c)
-{
-    for (int hops = 0; hops < 5; hops++) {
-        esp_err_t err = esp_http_client_open(c, 0);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "connect failed: %s", esp_err_to_name(err));
-            snprintf(s_why, sizeof(s_why), "%s", esp_err_to_name(err));
-            return -1;
-        }
-        if (esp_http_client_fetch_headers(c) < 0) {
-            ESP_LOGW(TAG, "no HTTP response");
-            snprintf(s_why, sizeof(s_why), "no HTTP response");
-            return -1;
-        }
-        int status = esp_http_client_get_status_code(c);
-        if (status < 300 || status >= 400) return status;
-        esp_http_client_set_redirection(c);
-        esp_http_client_close(c);
-    }
-    return -1;
-}
-
-static esp_http_client_handle_t http_new(const char *url)
-{
-    esp_http_client_config_t cfg = {
-        .url = url,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .buffer_size = CHUNK,
-        .buffer_size_tx = CHUNK,                /* release downloads redirect to long URLs */
-        .timeout_ms = 15000,
-        .user_agent = "P4-Launcher",
-    };
-    return esp_http_client_init(&cfg);
-}
-
-static bool newer(const char *a, const char *b)
-{
-    int x[3] = { 0 }, y[3] = { 0 };
-    sscanf(a, "%d.%d.%d", &x[0], &x[1], &x[2]);
-    sscanf(b, "%d.%d.%d", &y[0], &y[1], &y[2]);
-    for (int i = 0; i < 3; i++)
-        if (x[i] != y[i]) return x[i] > y[i];
-    return false;
-}
-
 static void check_task(void *arg)
 {
-    char url[256] = MANIFEST_URL;
-    FILE *f = fopen(URL_OVERRIDE, "r");
-    if (f) {
-        if (fgets(url, sizeof(url), f)) url[strcspn(url, "\r\n")] = 0;
-        fclose(f);
-    }
-    char *body = calloc(1, MANIFEST_MAX);
-    int status = -1;
-    for (int tries = 0; body && status < 0 && tries < 3; tries++) {     /* a weak signal drops some */
-        if (tries) vTaskDelay(pdMS_TO_TICKS(2000));
-        esp_http_client_handle_t c = http_new(url);
-        if (!c) break;
-        status = http_open(c);
-        int got = 0;
-        if (status == 200) {
-            int n;
-            while (got < MANIFEST_MAX - 1 && (n = esp_http_client_read(c, body + got, MANIFEST_MAX - 1 - got)) > 0)
-                got += n;
-        }
-        esp_http_client_close(c);
-        esp_http_client_cleanup(c);
-    }
-    cJSON *j = status == 200 ? cJSON_Parse(body) : NULL;
+    char url[256];
+    lx_http_url(url, sizeof(url), URL_OVERRIDE, MANIFEST_URL);
+    char *body = NULL;
+    int status = lx_http_get_text(url, MANIFEST_MAX, &body, s_why, sizeof(s_why));
+    cJSON *j = body ? cJSON_Parse(body) : NULL;
     free(body);
     /* This board's entry; the top level only stands for the first board */
     const char *id = bsp_info()->id;
@@ -152,7 +87,8 @@ static void check_task(void *arg)
         snprintf(s_url, sizeof(s_url), "%s", u->valuestring);
         snprintf(s_sha, sizeof(s_sha), "%s", h->valuestring);
         s_size = (long)s->valuedouble;
-        s_state = newer(s_version, esp_app_get_description()->version) ? LX_ONLINE_AVAILABLE : LX_ONLINE_LATEST;
+        s_state = lx_version_newer(s_version, esp_app_get_description()->version) ? LX_ONLINE_AVAILABLE
+                                                                                  : LX_ONLINE_LATEST;
     }
     cJSON_Delete(j);
     vTaskDelete(NULL);
@@ -163,12 +99,12 @@ static void download_task(void *arg)
     mkdir("/sd/update", 0775);
     uint8_t *buf = malloc(CHUNK);
     FILE *f = fopen(TMP_FILE, "wb");
-    esp_http_client_handle_t c = http_new(s_url);
+    esp_http_client_handle_t c = lx_http_new(s_url);
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
     mbedtls_sha256_starts(&sha, 0);
     long got = 0;
-    bool ok = buf && f && c && http_open(c) == 200;
+    bool ok = buf && f && c && lx_http_open(c, s_why, sizeof(s_why)) == 200;
     while (ok) {
         int n = esp_http_client_read(c, (char *)buf, CHUNK);
         if (n < 0) ok = false;

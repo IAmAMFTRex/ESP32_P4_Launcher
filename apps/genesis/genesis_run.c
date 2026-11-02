@@ -37,7 +37,7 @@
 #include "odroid_system.h"
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
-#include "st7701_lcd.h"
+#include "odroid_menu.h"
 
 static const char *TAG = "GENESIS_RUN";
 
@@ -53,7 +53,6 @@ static const char *TAG = "GENESIS_RUN";
 #define GWENESIS_AUDIO_ACCURATE 0
 #endif
 
-static void genesis_blit_sidebar_buttons(void);
 #define TARGET_FPS        60
 #define GEN_MAX_FRAMESKIP 3   /* max consecutive render-skips to hold 60 FPS game speed */
 
@@ -131,6 +130,8 @@ static int16_t *audio_dma_buf[AUD_QUEUE_DEPTH] = { NULL, NULL };
 
 /* Audio synthesis on Core 1 — decoupled, no cross-core wait */
 static volatile int audio_target_clock = 0;
+/* Frames handed to the audio task / finished by it (genesis_wait_idle) */
+static volatile uint32_t audio_req = 0, audio_done = 0;
 
 
 /* Scanline loop state — scan_line must be non-static (extern'd by core) */
@@ -215,60 +216,6 @@ void gwenesis_io_get_buttons(void)
     /* Input is handled in the main emulation loop instead */
 }
 
-/* ─── Minimal 5×5 bitmap font (A-Z) for menu/volume overlay ──── */
-static const uint8_t font5x5[][5] = {
-    /* A */ {0x0E,0x11,0x1F,0x11,0x11},
-    /* B */ {0x1E,0x11,0x1E,0x11,0x1E},
-    /* C */ {0x0F,0x10,0x10,0x10,0x0F},
-    /* D */ {0x1E,0x11,0x11,0x11,0x1E},
-    /* E */ {0x1F,0x10,0x1E,0x10,0x1F},
-    /* F */ {0x1F,0x10,0x1E,0x10,0x10},
-    /* G */ {0x0F,0x10,0x13,0x11,0x0F},
-    /* H */ {0x11,0x11,0x1F,0x11,0x11},
-    /* I */ {0x0E,0x04,0x04,0x04,0x0E},
-    /* J */ {0x01,0x01,0x01,0x11,0x0E},
-    /* K */ {0x11,0x12,0x1C,0x12,0x11},
-    /* L */ {0x10,0x10,0x10,0x10,0x1F},
-    /* M */ {0x11,0x1B,0x15,0x11,0x11},
-    /* N */ {0x11,0x19,0x15,0x13,0x11},
-    /* O */ {0x0E,0x11,0x11,0x11,0x0E},
-    /* P */ {0x1E,0x11,0x1E,0x10,0x10},
-    /* Q */ {0x0E,0x11,0x15,0x12,0x0D},
-    /* R */ {0x1E,0x11,0x1E,0x12,0x11},
-    /* S */ {0x0F,0x10,0x0E,0x01,0x1E},
-    /* T */ {0x1F,0x04,0x04,0x04,0x04},
-    /* U */ {0x11,0x11,0x11,0x11,0x0E},
-    /* V */ {0x11,0x11,0x11,0x0A,0x04},
-    /* W */ {0x11,0x11,0x15,0x1B,0x11},
-    /* X */ {0x11,0x0A,0x04,0x0A,0x11},
-    /* Y */ {0x11,0x0A,0x04,0x04,0x04},
-    /* Z */ {0x1F,0x02,0x04,0x08,0x1F},
-};
-
-#define DCOL_BLACK  0x0000
-#define DCOL_WHITE  0xFFFF
-#define DCOL_GREEN  0x07E0
-#define DCOL_RED    0xF800
-#define DCOL_YELLOW 0xFFE0
-
-static void menu_draw_char(uint16_t *fb, int stride, int cx, int cy, int h, char ch, uint16_t color)
-{
-    int idx = -1;
-    if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-    else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-    if (idx < 0) return;
-    for (int row = 0; row < 5; row++)
-        for (int col = 0; col < 5; col++)
-            if (font5x5[idx][row] & (0x10 >> col))
-                if ((cy + row) < h && (cx + col) < stride)
-                    fb[(cy + row) * stride + (cx + col)] = color;
-}
-
-static void menu_draw_str(uint16_t *fb, int stride, int x, int y, int h, const char *s, uint16_t color)
-{
-    while (*s) { menu_draw_char(fb, stride, x, y, h, *s++, color); x += 6; }
-}
-
 /* ─── Palette conversion: 8-bit indexed → RGB565 ────────────────── */
 /* src stride is always 320 (VDP framebuffer), but visible width may be 256 (H32) */
 static void gen_convert_frame(const uint8_t *src, uint16_t *dst,
@@ -298,7 +245,6 @@ static void genesis_video_task(void *arg)
 {
     uint8_t *frame = NULL;
     videoTaskRunning = true;
-    int sidebar_countdown = 2;
 
     ESP_LOGI(TAG, "Video task started on core %d", xPortGetCoreID());
 
@@ -320,14 +266,6 @@ static void genesis_video_task(void *arg)
             /* H40 mode: 320×224 — scale 2× + rotate via PPA */
             ili9341_write_frame_rgb565_custom(gen_rgb565, 320, h, 2.0f, false);
         }
-
-        /* Draw sidebar buttons on first frames */
-#ifndef CONFIG_HDMI_OUTPUT
-        if (sidebar_countdown > 0) {
-            genesis_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-#endif
 
         xQueueReceive(vidQueue, &frame, portMAX_DELAY);
     }
@@ -356,6 +294,7 @@ static void genesis_audio_task(void *arg)
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (genesis_quit_flag) break;
+        uint32_t req = audio_req;
 
         /* Reset audio index/clock for this frame HERE (moved from the main
          * loop). These counters are used only by this task, so the main loop no
@@ -371,7 +310,7 @@ static void genesis_audio_task(void *arg)
 
         /* ── Mix SN76489 + YM2612 and downsample 2:1 ── */
         int audio_len = sn76489_index > ym2612_index ? sn76489_index : ym2612_index;
-        if (audio_len <= 0) continue;
+        if (audio_len <= 0) { audio_done = req; continue; }
 
         int out_len = audio_len / 2;
         if (out_len <= 0) out_len = 1;
@@ -408,6 +347,7 @@ static void genesis_audio_task(void *arg)
         }
 
         dma_idx = (dma_idx + 1) % AUD_QUEUE_DEPTH;
+        audio_done = req;
     }
 
     audioTaskRunning = false;
@@ -485,304 +425,53 @@ static bool genesis_do_load_state(void)
     return ok;
 }
 
-/* ─── Volume overlay (same pattern as SNES) ────────────────────── */
-static void genesis_show_volume(void)
+static bool genesis_delete_save(void)
 {
-    static const char * const level_names[] = { "MUTE", "25%", "50%", "75%", "100%" };
+    char *path = genesis_get_save_path();
+    if (!path) return false;
+    odroid_sdcard_open("/sd");
+    bool ok = (remove(path) == 0);
+    odroid_sdcard_close();
+    free(path);
+    return ok;
+}
 
-    int level = (int)odroid_audio_volume_get();
-    level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-    odroid_audio_volume_set(level);
-    odroid_settings_Volume_set(level);
-
-    int timeout = 25;
-    uint16_t *fb = gen_rgb565;
-    if (!fb) return;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce */
+/* The launcher draws the menu and the volume dialog: wait until the video task
+ * has presented its last frame and the audio task has finished its frame, so
+ * neither touches the display or the core state while the dialog is up */
+static void genesis_wait_idle(void)
+{
     for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    int fw = (screen_width == 256) ? 256 : 320;
-    int fh = (int)screen_height;
-
-    while (timeout > 0) {
-        /* Redraw current frame as background */
-        gen_convert_frame(gen_fb[gen_fb_write], fb, gen_palette, fw, fh);
-
-        int box_w = 140, box_h = 34;
-        int box_x = (fw - box_w) / 2;
-        int box_y = 4;
-
-        /* Dark background + border */
-        for (int r = box_y; r < box_y + box_h && r < fh; r++)
-            for (int c = box_x; c < box_x + box_w && c < fw; c++)
-                fb[r * fw + c] = DCOL_BLACK;
-        for (int c = box_x; c < box_x + box_w; c++) {
-            if (box_y < fh) fb[box_y * fw + c] = DCOL_WHITE;
-            if (box_y + box_h - 1 < fh) fb[(box_y + box_h - 1) * fw + c] = DCOL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h && r < fh; r++) {
-            fb[r * fw + box_x] = DCOL_WHITE;
-            fb[r * fw + box_x + box_w - 1] = DCOL_WHITE;
-        }
-
-        char title[32];
-        snprintf(title, sizeof(title), "VOL %s", level_names[level]);
-        menu_draw_str(fb, fw, box_x + 8, box_y + 4, fh, title, DCOL_YELLOW);
-
-        /* Volume bar */
-        int bar_x = box_x + 6, bar_y = box_y + 16;
-        int bar_w = box_w - 12, bar_h = 10;
-        for (int r = bar_y; r < bar_y + bar_h && r < fh; r++)
-            for (int c = bar_x; c < bar_x + bar_w && c < fw; c++)
-                fb[r * fw + c] = 0x2104;
-        if (level > 0) {
-            int fill = (bar_w * level) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            uint16_t bar_col = (level <= 1) ? 0x07E0 : (level <= 3) ? 0x07FF : DCOL_YELLOW;
-            for (int r = bar_y; r < bar_y + bar_h && r < fh; r++)
-                for (int c = bar_x; c < bar_x + fill && c < fw; c++)
-                    fb[r * fw + c] = bar_col;
-        }
-
-        ili9341_write_frame_rgb565_custom(fb, fw, fh, 2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) level--;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < ODROID_VOLUME_LEVEL_COUNT - 1) level++;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])) {
-            break;
-        }
-
-        prev = state;
-        timeout--;
+        if (uxQueueMessagesWaiting(vidQueue) == 0 && audio_done == audio_req) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
 
-/* ─── In-game menu (same pattern as SNES) ──────────────────────── */
+/* ─── In-game menu (launcher-drawn, odroid_menu.h) ─────────────── */
+/* Returns true when the game should exit */
 static bool genesis_show_menu(void)
 {
-    uint16_t *fb = gen_rgb565;
-    if (!fb) return false;
-
-    int fw = (screen_width == 256) ? 256 : 320;
-    int fh = (int)screen_height;
-
-    int sel = 0;
-    bool has_save = genesis_check_save_exists();
-    const int ITEMS = 4;
-    const char *labels[] = { "RESUME", "SAVE STATE", "LOAD STATE", "EXIT GAME" };
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce */
-    for (int i = 0; i < 50; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_MENU]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    const char *status_msg = NULL;
-    uint16_t status_color = DCOL_GREEN;
-    int status_timeout = 0;
-
-    while (1) {
-        /* Redraw current frame as background */
-        gen_convert_frame(gen_fb[gen_fb_write], fb, gen_palette, fw, fh);
-
-        int box_w = 140, box_h = 18 + ITEMS * 14;
-        int box_x = (fw - box_w) / 2;
-        int box_y = (fh - box_h) / 2;
-
-        /* Background */
-        for (int r = box_y; r < box_y + box_h && r < fh; r++)
-            for (int c = box_x; c < box_x + box_w && c < fw; c++)
-                fb[r * fw + c] = DCOL_BLACK;
-
-        /* Border */
-        for (int c = box_x; c < box_x + box_w; c++) {
-            fb[box_y * fw + c] = DCOL_WHITE;
-            fb[(box_y + box_h - 1) * fw + c] = DCOL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h; r++) {
-            fb[r * fw + box_x] = DCOL_WHITE;
-            fb[r * fw + box_x + box_w - 1] = DCOL_WHITE;
-        }
-
-        /* Menu items */
-        for (int i = 0; i < ITEMS; i++) {
-            bool greyed = (i == 2 && !has_save);
-            uint16_t color = greyed ? 0x4208 : (i == sel) ? DCOL_GREEN : DCOL_WHITE;
-            int ty = box_y + 10 + i * 14;
-            int tx = box_x + 20;
-
-            if (i == sel) {
-                for (int dy = 0; dy < 5; dy++)
-                    for (int dx = 0; dx < 3; dx++)
-                        fb[(ty + dy) * fw + tx - 10 + dx] = color;
-            }
-
-            menu_draw_str(fb, fw, tx, ty, fh, labels[i], color);
-        }
-
-        if (status_msg && status_timeout > 0) {
-            menu_draw_str(fb, fw, box_x + 8, box_y + box_h + 4, fh, status_msg, status_color);
-            status_timeout--;
-        }
-
-        ili9341_write_frame_rgb565_custom(fb, fw, fh, 2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-
-        odroid_gamepad_state gp;
-        odroid_input_gamepad_read(&gp);
-
-        if (gp.values[ODROID_INPUT_UP] && !prev.values[ODROID_INPUT_UP])
-            sel = (sel - 1 + ITEMS) % ITEMS;
-        if (gp.values[ODROID_INPUT_DOWN] && !prev.values[ODROID_INPUT_DOWN])
-            sel = (sel + 1) % ITEMS;
-        if (gp.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) {
-            if (sel == 0) return false;  /* Resume */
-            if (sel == 1) {              /* Save State */
-                if (genesis_do_save_state()) {
-                    status_msg = "SAVED OK";
-                    status_color = DCOL_GREEN;
-                    has_save = true;
-                } else {
-                    status_msg = "SAVE FAILED";
-                    status_color = DCOL_RED;
-                }
-                status_timeout = 15;
-            }
-            if (sel == 2 && has_save) {  /* Load State */
-                if (genesis_do_load_state()) {
-                    return false;
-                } else {
-                    status_msg = "LOAD FAILED";
-                    status_color = DCOL_RED;
-                    status_timeout = 15;
-                }
-            }
-            if (sel == 3) return true;   /* Exit */
-        }
-        if (gp.values[ODROID_INPUT_MENU] && !prev.values[ODROID_INPUT_MENU])
+    genesis_wait_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, genesis_check_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = genesis_do_save_state() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = genesis_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            if (!genesis_do_load_state()) { note = "load failed"; continue; }
             return false;
-        if (gp.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
+        case EMU_MENU_RESTART:
+            reset_emulation();
             return false;
-
-        prev = gp;
-    }
-}
-
-/* ─── Sidebar button labels ───────────────────────────────────── */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } s_sidebar_btns[] = {
-    { "MENU", 200, 2,   80, 76 },   /* left sidebar: portrait y 0-79 (80px for 640-wide output) */
-    { "VOL",  200, 722, 80, 76 },   /* right sidebar: portrait y 720-799 */
-};
-
-static void genesis_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = s_sidebar_btns[b].pw, ph = s_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
+        case EMU_MENU_EXIT:
+            return true;
+        default:
+            return false;
         }
-
-        /* Render upright text */
-        const char *s = s_sidebar_btns[b].text;
-        int nch = strlen(s);
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_by = oy + ci * (CW + GAP);
-
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-    }
-}
-
-static void genesis_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)s_sidebar_btns[b].px, (uint16_t)s_sidebar_btns[b].py,
-            (uint16_t)s_sidebar_btns[b].pw, (uint16_t)s_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
     }
 }
 
@@ -994,11 +683,6 @@ void genesis_run(const char *rom_path)
     ESP_LOGI(TAG, "Audio: synth=%d Hz, I2S=%d Hz (2:1 downsample)",
              REG1_PAL ? GWENESIS_AUDIO_FREQ_PAL : GWENESIS_AUDIO_FREQ_NTSC, gen_i2s_rate);
 
-    /* ── Pre-render sidebar buttons ── */
-#ifndef CONFIG_HDMI_OUTPUT
-    genesis_init_sidebar_buttons();
-#endif
-
     /* Genesis 3-button pad needs X/Y as face buttons (A/C).
      * MENU and VOLUME are handled by the touchscreen shoulder zones. */
     extern bool odroid_input_xy_menu_disable;
@@ -1037,7 +721,8 @@ void genesis_run(const char *rom_path)
         odroid_input_gamepad_read(&gp);
 
         if (gp.values[ODROID_INPUT_VOLUME] && !gp_prev.values[ODROID_INPUT_VOLUME]) {
-            genesis_show_volume();
+            genesis_wait_idle();
+            odroid_emu_volume();
             fps_timer = esp_timer_get_time();
             frame_deadline = esp_timer_get_time() + target_frame_us;
             consec_skips = 0;
@@ -1182,6 +867,7 @@ void genesis_run(const char *rom_path)
 
         /* ── Signal audio task (synthesis + mix + submit on Core 1) ── */
         audio_target_clock = system_clock;
+        audio_req++;
         xTaskNotifyGive(audioTaskHandle);
 
         int64_t t3 = esp_timer_get_time();
@@ -1275,9 +961,6 @@ cleanup:
     if (gen_rgb565) { heap_caps_free(gen_rgb565); gen_rgb565 = NULL; }
     for (int i = 0; i < AUD_QUEUE_DEPTH; i++) {
         if (audio_dma_buf[i]) { heap_caps_free(audio_dma_buf[i]); audio_dma_buf[i] = NULL; }
-    }
-    for (int b = 0; b < 2; b++) {
-        if (s_sidebar_buf[b]) { heap_caps_free(s_sidebar_buf[b]); s_sidebar_buf[b] = NULL; }
     }
     if (ROM_DATA) { heap_caps_free(ROM_DATA); ROM_DATA = NULL; }
 

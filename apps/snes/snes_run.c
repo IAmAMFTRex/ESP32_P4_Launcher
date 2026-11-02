@@ -41,7 +41,7 @@
 #include "odroid_system.h"
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
-#include "st7701_lcd.h"
+#include "odroid_menu.h"
 
 static const char *TAG = "SNES_RUN";
 
@@ -65,9 +65,6 @@ static volatile bool snes_audio_resync = false;  /* signal audio task to reset t
 static volatile bool videoTaskRunning = false;
 static volatile bool audioTaskRunning = false;
 
-/* Forward declarations */
-static void snes_blit_sidebar_buttons(void);
-
 static uint16_t *snes_fb[2] = { NULL, NULL };  /* double-buffer for SNES output */
 static uint8_t  *snes_subscreen = NULL;         /* dedicated SubScreen buffer */
 static int snes_fb_write = 0;
@@ -76,6 +73,8 @@ static TaskHandle_t videoTaskHandle;
 
 /* Audio offload — double-buffered audio, mixed and played on Core 1 */
 static TaskHandle_t audioTaskHandle;
+/* Frames handed to the audio task / finished by it (snes_wait_idle) */
+static volatile uint32_t audio_req = 0, audio_done = 0;
 
 #define AUD_QUEUE_DEPTH 2
 static int16_t *audio_dma_buf[AUD_QUEUE_DEPTH] = { NULL, NULL };
@@ -193,8 +192,6 @@ static void snes_video_task(void *arg)
 {
     uint16_t *frame = NULL;
     videoTaskRunning = true;
-    int sidebar_countdown = 2;  /* blit sidebar on first 2 frames, then stop */
-    (void)sidebar_countdown;
 
     while (1) {
         xQueuePeek(vidQueue, &frame, portMAX_DELAY);
@@ -207,14 +204,6 @@ static void snes_video_task(void *arg)
         /* Direct 2× scale + 270° rotate — no 320×240 staging buffer */
         ili9341_write_frame_rgb565_custom(frame, SNES_FB_W, SNES_FB_H,
                                            2.0f, false);
-
-        /* Draw sidebar buttons once after the first frame clears borders */
-#ifndef CONFIG_HDMI_OUTPUT
-        if (sidebar_countdown > 0) {
-            snes_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-#endif
 
         xQueueReceive(vidQueue, &frame, portMAX_DELAY);
     }
@@ -244,6 +233,7 @@ static void snes_audio_task(void *arg)
         /* Wait for the emu loop's per-frame signal */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         if (snes_quit_flag) break;
+        uint32_t req = audio_req;
 
         if (snes_audio_resync) {
             snes_audio_resync = false;
@@ -284,66 +274,11 @@ static void snes_audio_task(void *arg)
         odroid_audio_submit(dest, out_n);
         samples_produced += out_n;
         dma_idx = (dma_idx + 1) % AUD_QUEUE_DEPTH;
+        audio_done = req;
     }
 
     audioTaskRunning = false;
     vTaskDelete(NULL);
-}
-
-/* ─── In-game menu ──────────────────────────────────────────────── */
-/* Standard RGB565 color constants (byte_swap=false like SMS/NES path) */
-#define DCOL_BLACK  0x0000
-#define DCOL_WHITE  0xFFFF
-#define DCOL_GREEN  0x07E0   /* standard RGB565 green */
-#define DCOL_RED    0xF800   /* standard RGB565 red   */
-#define DCOL_YELLOW 0xFFE0   /* standard RGB565 yellow */
-
-/* Minimal 5×5 bitmap font for menu labels (A-Z, space) */
-static const uint8_t font5x5[][5] = {
-    /* A */ {0x0E,0x11,0x1F,0x11,0x11},
-    /* B */ {0x1E,0x11,0x1E,0x11,0x1E},
-    /* C */ {0x0F,0x10,0x10,0x10,0x0F},
-    /* D */ {0x1E,0x11,0x11,0x11,0x1E},
-    /* E */ {0x1F,0x10,0x1E,0x10,0x1F},
-    /* F */ {0x1F,0x10,0x1E,0x10,0x10},
-    /* G */ {0x0F,0x10,0x13,0x11,0x0F},
-    /* H */ {0x11,0x11,0x1F,0x11,0x11},
-    /* I */ {0x0E,0x04,0x04,0x04,0x0E},
-    /* J */ {0x01,0x01,0x01,0x11,0x0E},
-    /* K */ {0x11,0x12,0x1C,0x12,0x11},
-    /* L */ {0x10,0x10,0x10,0x10,0x1F},
-    /* M */ {0x11,0x1B,0x15,0x11,0x11},
-    /* N */ {0x11,0x19,0x15,0x13,0x11},
-    /* O */ {0x0E,0x11,0x11,0x11,0x0E},
-    /* P */ {0x1E,0x11,0x1E,0x10,0x10},
-    /* Q */ {0x0E,0x11,0x15,0x12,0x0D},
-    /* R */ {0x1E,0x11,0x1E,0x12,0x11},
-    /* S */ {0x0F,0x10,0x0E,0x01,0x1E},
-    /* T */ {0x1F,0x04,0x04,0x04,0x04},
-    /* U */ {0x11,0x11,0x11,0x11,0x0E},
-    /* V */ {0x11,0x11,0x11,0x0A,0x04},
-    /* W */ {0x11,0x11,0x15,0x1B,0x11},
-    /* X */ {0x11,0x0A,0x04,0x0A,0x11},
-    /* Y */ {0x11,0x0A,0x04,0x04,0x04},
-    /* Z */ {0x1F,0x02,0x04,0x08,0x1F},
-};
-
-static void menu_draw_char(uint16_t *fb, int cx, int cy, char ch, uint16_t color)
-{
-    int idx = -1;
-    if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-    else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-    if (idx < 0) return;  /* space or unknown → skip */
-    for (int row = 0; row < 5; row++)
-        for (int col = 0; col < 5; col++)
-            if (font5x5[idx][row] & (0x10 >> col))
-                if ((cy + row) < SNES_FB_H && (cx + col) < SNES_FB_W)
-                    fb[(cy + row) * SNES_FB_W + (cx + col)] = color;
-}
-
-static void menu_draw_str(uint16_t *fb, int x, int y, const char *s, uint16_t color)
-{
-    while (*s) { menu_draw_char(fb, x, y, *s++, color); x += 6; }
 }
 
 /* ─── Save state helpers ───────────────────────────────────────── */
@@ -472,337 +407,64 @@ static bool snes_do_load_state(void)
     return ok;
 }
 
-/* ─── Volume overlay ───────────────────────────────────────────── */
-static void snes_show_volume(void)
+static bool snes_delete_save(void)
 {
-    static const char * const level_names[] = { "MUTE", "25%", "50%", "75%", "100%" };
+    char *path = snes_get_save_path();
+    if (!path) return false;
+    odroid_sdcard_open("/sd");
+    bool ok = (remove(path) == 0);
+    odroid_sdcard_close();
+    free(path);
+    return ok;
+}
 
-    int level = (int)odroid_audio_volume_get();
-    /* Cycle to next level on press */
-    level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-    odroid_audio_volume_set(level);
-    odroid_settings_Volume_set(level);
-
-    int timeout = 25;  /* ~2 s at 80 ms per poll */
-
-    uint16_t *fb = snes_fb[snes_fb_write];
-    if (!fb) return;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce: wait for volume button release */
-    for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    while (timeout > 0) {
-        /* Draw overlay on the write framebuffer */
-        int box_w = 140, box_h = 34;
-        int box_x = (SNES_FB_W - box_w) / 2;
-        int box_y = 4;
-
-        /* Dark background + border */
-        for (int r = box_y; r < box_y + box_h && r < SNES_FB_H; r++)
-            for (int c = box_x; c < box_x + box_w && c < SNES_FB_W; c++)
-                fb[r * SNES_FB_W + c] = DCOL_BLACK;
-        for (int c = box_x; c < box_x + box_w; c++) {
-            if (box_y < SNES_FB_H) fb[box_y * SNES_FB_W + c] = DCOL_WHITE;
-            if (box_y + box_h - 1 < SNES_FB_H) fb[(box_y + box_h - 1) * SNES_FB_W + c] = DCOL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h && r < SNES_FB_H; r++) {
-            fb[r * SNES_FB_W + box_x] = DCOL_WHITE;
-            fb[r * SNES_FB_W + box_x + box_w - 1] = DCOL_WHITE;
-        }
-
-        /* Title */
-        char title[32];
-        snprintf(title, sizeof(title), "VOL %s", level_names[level]);
-        menu_draw_str(fb, box_x + 8, box_y + 4, title, DCOL_YELLOW);
-
-        /* Volume bar */
-        int bar_x = box_x + 6;
-        int bar_y = box_y + 16;
-        int bar_w = box_w - 12;
-        int bar_h = 10;
-        for (int r = bar_y; r < bar_y + bar_h && r < SNES_FB_H; r++)
-            for (int c = bar_x; c < bar_x + bar_w && c < SNES_FB_W; c++)
-                fb[r * SNES_FB_W + c] = 0x2104; /* dark grey */
-        if (level > 0) {
-            int fill = (bar_w * level) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            uint16_t bar_col = (level <= 1) ? 0x07E0 : (level <= 3) ? 0x07FF : DCOL_YELLOW;
-            for (int r = bar_y; r < bar_y + bar_h && r < SNES_FB_H; r++)
-                for (int c = bar_x; c < bar_x + fill && c < SNES_FB_W; c++)
-                    fb[r * SNES_FB_W + c] = bar_col;
-        }
-
-        ili9341_write_frame_rgb565_custom(fb, SNES_FB_W, SNES_FB_H, 2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        /* Left/right adjust volume while overlay is visible */
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) level--;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < ODROID_VOLUME_LEVEL_COUNT - 1) level++;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        /* Another press of volume cycles forward */
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        /* A or B dismisses immediately */
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])) {
-            break;
-        }
-
-        prev = state;
-        timeout--;
+/* Power-cycle the console, as after LoadROM (battery SRAM is kept) */
+static void snes_restart(void)
+{
+    S9xReset();
+    if (Settings.SuperFX) {
+        S9xResetSuperFX();
+        GSU.pvRam = SuperFX.pvRam;
+        GSU.nRamBanks = SuperFX.nRamBanks;
     }
 }
 
+/* The launcher draws the menu and the volume dialog: wait until the video task
+ * has presented its last frame and the audio task has mixed its frame, so
+ * neither touches the display or the core state while the dialog is up */
+static void snes_wait_idle(void)
+{
+    for (int i = 0; i < 100; i++) {
+        if (uxQueueMessagesWaiting(vidQueue) == 0 && audio_done == audio_req) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+/* ─── In-game menu (launcher-drawn, odroid_menu.h) ─────────────── */
+/* Returns true when the game should exit */
 static bool snes_show_menu(void)
 {
-    /* Use the inactive framebuffer as scratch for menu drawing */
-    uint16_t *fb = snes_fb[snes_fb_write];
-    if (!fb) return false;
-
-    int sel = 0;
-    bool has_save = snes_check_save_exists();
-    const int ITEMS = 4;
-    const char *labels[] = { "RESUME", "SAVE STATE", "LOAD STATE", "EXIT GAME" };
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce menu button */
-    for (int i = 0; i < 50; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_MENU]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    /* Status message shown after save/load attempt */
-    const char *status_msg = NULL;
-    uint16_t status_color = DCOL_GREEN;
-    int status_timeout = 0;
-
-    while (1) {
-        int box_w = 140, box_h = 18 + ITEMS * 14;
-        int box_x = (SNES_FB_W - box_w) / 2;
-        int box_y = (SNES_FB_H - box_h) / 2;
-
-        /* Background box */
-        for (int r = box_y; r < box_y + box_h && r < SNES_FB_H; r++)
-            for (int c = box_x; c < box_x + box_w && c < SNES_FB_W; c++)
-                fb[r * SNES_FB_W + c] = DCOL_BLACK;
-
-        /* Border */
-        for (int c = box_x; c < box_x + box_w; c++) {
-            fb[box_y * SNES_FB_W + c] = DCOL_WHITE;
-            fb[(box_y + box_h - 1) * SNES_FB_W + c] = DCOL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h; r++) {
-            fb[r * SNES_FB_W + box_x] = DCOL_WHITE;
-            fb[r * SNES_FB_W + box_x + box_w - 1] = DCOL_WHITE;
-        }
-
-        /* Menu items with text */
-        for (int i = 0; i < ITEMS; i++) {
-            /* Grey out "LOAD STATE" if no save file exists */
-            bool greyed = (i == 2 && !has_save);
-            uint16_t color = greyed ? 0x4208 : (i == sel) ? DCOL_GREEN : DCOL_WHITE;
-            int ty = box_y + 10 + i * 14;
-            int tx = box_x + 20;
-
-            /* Selection arrow ">" */
-            if (i == sel) {
-                for (int dy = 0; dy < 5; dy++)
-                    for (int dx = 0; dx < 3; dx++)
-                        fb[(ty + dy) * SNES_FB_W + tx - 10 + dx] = color;
-            }
-
-            menu_draw_str(fb, tx, ty, labels[i], color);
-        }
-
-        /* Draw status message if active */
-        if (status_msg && status_timeout > 0) {
-            menu_draw_str(fb, box_x + 8, box_y + box_h + 4, status_msg, status_color);
-            status_timeout--;
-        }
-
-        ili9341_write_frame_rgb565_custom(fb, SNES_FB_W, SNES_FB_H,
-                                          2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-
-        odroid_gamepad_state gp;
-        odroid_input_gamepad_read(&gp);
-
-        if (gp.values[ODROID_INPUT_UP] && !prev.values[ODROID_INPUT_UP])
-            sel = (sel - 1 + ITEMS) % ITEMS;
-        if (gp.values[ODROID_INPUT_DOWN] && !prev.values[ODROID_INPUT_DOWN])
-            sel = (sel + 1) % ITEMS;
-        if (gp.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) {
-            if (sel == 0) return false;  /* Resume */
-            if (sel == 1) {              /* Save State */
-                if (snes_do_save_state()) {
-                    status_msg = "SAVED OK";
-                    status_color = DCOL_GREEN;
-                    has_save = true;
-                } else {
-                    status_msg = "SAVE FAILED";
-                    status_color = DCOL_RED;
-                }
-                status_timeout = 15;
-            }
-            if (sel == 2 && has_save) {  /* Load State */
-                if (snes_do_load_state()) {
-                    return false;  /* Resume with loaded state */
-                } else {
-                    status_msg = "LOAD FAILED";
-                    status_color = DCOL_RED;
-                    status_timeout = 15;
-                }
-            }
-            if (sel == 3) return true;   /* Exit */
-        }
-        if (gp.values[ODROID_INPUT_MENU] && !prev.values[ODROID_INPUT_MENU])
+    snes_wait_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, snes_check_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = snes_do_save_state() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = snes_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            if (!snes_do_load_state()) { note = "load failed"; continue; }
             return false;
-        if (gp.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
+        case EMU_MENU_RESTART:
+            snes_restart();
             return false;
-
-        prev = gp;
-    }
-}
-
-/* ─── Sidebar button labels ───────────────────────────────────── */
-/*
- * Draw "MENU" and "VOL" button labels in the black side bars.
- *
- * LCD portrait: 480 wide (x) × 800 tall (y).
- * Device held landscape with portrait-top on LEFT:
- *   landscape_x = portrait_y          (small portrait_y → landscape LEFT)
- *   landscape_y = 479 − portrait_x    (small portrait_x → landscape BOTTOM)
- *
- * Touch zone: portrait y < 170 = landscape LEFT  = MENU
- *             portrait y > 630 = landscape RIGHT = VOL
- *
- * SNES game area on LCD: portrait (16, 144) to (463, 655).
- *   LEFT sidebar  = portrait y   0..143  → MENU
- *   RIGHT sidebar = portrait y 656..799  → VOL
- *
- * Glyph rendering (upright text, reading L→R in landscape):
- *   font_col (left=0..right=4)    → portrait_y INCREASES (landscape L→R)
- *   font_row (top=0..bottom=4)    → portrait_x DECREASES (landscape top→bottom)
- *   Characters march in portrait +y direction (= landscape L→R).
- */
-
-/* Persistent sidebar button buffers — allocated once, reused every frame */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } s_sidebar_btns[] = {
-    { "MENU", 200, 22,  80, 100 },       /* landscape LEFT  sidebar (portrait y < 144) */
-    { "VOL",  200, 700, 80,  84 },       /* landscape RIGHT sidebar (portrait y > 656) */
-};
-
-static void snes_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = s_sidebar_btns[b].pw, ph = s_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-
-        /* Background fill */
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
+        case EMU_MENU_EXIT:
+            return true;
+        default:
+            return false;
         }
-
-        /* Render upright text reading L→R in landscape */
-        const char *s = s_sidebar_btns[b].text;
-        int nch = 0;
-        for (const char *p = s; *p; p++) nch++;
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_by = oy + ci * (CW + GAP);
-
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-
-        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered, portrait (%d,%d) %dx%d",
-                 b, s_sidebar_btns[b].text, s_sidebar_btns[b].px, s_sidebar_btns[b].py, pw, ph);
-    }
-}
-
-/* Blit pre-rendered sidebar buttons to LCD (called from video task AFTER each game frame).
- * Uses direct CPU memcpy to the DPI framebuffer, bypassing the async DMA2D
- * pipeline to avoid contention with the game-frame draw_bitmap (which holds
- * a non-blocking semaphore while its DMA transfer is in-flight). */
-static void snes_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)s_sidebar_btns[b].px, (uint16_t)s_sidebar_btns[b].py,
-            (uint16_t)s_sidebar_btns[b].pw, (uint16_t)s_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
     }
 }
 
@@ -1024,11 +686,6 @@ void snes_run(const char *rom_path)
     /* ── Initialize audio ── */
     odroid_audio_init(AUDIO_SAMPLE_RATE);
 
-    /* ── Pre-render sidebar button bitmaps ── */
-#ifndef CONFIG_HDMI_OUTPUT
-    snes_init_sidebar_buttons();
-#endif
-
     /* SNES has native X/Y face buttons — don't alias them to Menu/Volume */
     odroid_input_xy_menu_disable = true;
 
@@ -1085,7 +742,8 @@ void snes_run(const char *rom_path)
         odroid_input_gamepad_read(&gp);
 
         if (gp.values[ODROID_INPUT_VOLUME] && !gp_prev.values[ODROID_INPUT_VOLUME]) {
-            snes_show_volume();
+            snes_wait_idle();
+            odroid_emu_volume();
             snes_audio_resync = true;
             fps_timer = esp_timer_get_time();
             frame_deadline = esp_timer_get_time() + target_frame_us;
@@ -1113,6 +771,7 @@ void snes_run(const char *rom_path)
         int64_t t_cpu1 = esp_timer_get_time();
 
         /* Audio — signal Core 1 audio task to mix and play */
+        audio_req++;
         xTaskNotifyGive(audioTaskHandle);
         int64_t t_aud1 = esp_timer_get_time();
 

@@ -36,7 +36,7 @@
 #ifndef V1_STACK
 #define V1_STACK 32768
 #endif
-PAPP_MANIFEST(.id = V1_ID, .name = V1_NAME, .version = "1.0.0", .main_stack = V1_STACK);
+PAPP_MANIFEST(.id = V1_ID, .name = V1_NAME, .version = PAPP_APP_VERSION, .main_stack = V1_STACK);
 
 int app_entry(const app_services_t *svc);
 extern volatile int v1_exit_requested;       /* the game's flag (see build) */

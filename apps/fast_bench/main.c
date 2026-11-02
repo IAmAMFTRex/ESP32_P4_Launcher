@@ -7,7 +7,7 @@
  */
 #include "papp/papp.h"
 
-PAPP_MANIFEST(.id = "test.fastbench", .name = "FAST bench", .version = "0.1.0", .main_stack = 8192, .flags = PAPP_MF_HIDDEN);
+PAPP_MANIFEST(.id = "test.fastbench", .name = "FAST bench", .version = PAPP_APP_VERSION, .main_stack = 8192, .flags = PAPP_MF_HIDDEN);
 
 #define SUF  _s
 #define CODE

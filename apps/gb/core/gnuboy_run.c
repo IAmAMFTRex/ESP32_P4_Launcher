@@ -43,224 +43,13 @@
 #include "odroid_audio.h"
 #include "odroid_system.h"
 #include "odroid_sdcard.h"
+#include "odroid_menu.h"
 
 static const char *TAG = "gnuboy_run";
 
 #define GAMEBOY_WIDTH  (160)
 #define GAMEBOY_HEIGHT (144)
 #define AUDIO_SAMPLE_RATE (32000)
-
-/* ─── 5×7 Bitmap Font (same as NES menu) ────────────────────────── */
-static const uint8_t gb_font5x7[][7] = {
-    /* ' ' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    /* 'A' */ {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'B' */ {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
-    /* 'C' */ {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
-    /* 'D' */ {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
-    /* 'E' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
-    /* 'F' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
-    /* 'G' */ {0x0E,0x11,0x10,0x17,0x11,0x11,0x0E},
-    /* 'H' */ {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'I' */ {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
-    /* 'J' */ {0x07,0x02,0x02,0x02,0x02,0x12,0x0C},
-    /* 'K' */ {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
-    /* 'L' */ {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
-    /* 'M' */ {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
-    /* 'N' */ {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
-    /* 'O' */ {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'P' */ {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
-    /* 'Q' */ {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
-    /* 'R' */ {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
-    /* 'S' */ {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},
-    /* 'T' */ {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
-    /* 'U' */ {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'V' */ {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
-    /* 'W' */ {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
-    /* 'X' */ {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
-    /* 'Y' */ {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
-    /* 'Z' */ {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
-    /* '!' */ {0x04,0x04,0x04,0x04,0x04,0x00,0x04},
-    /* '>' */ {0x10,0x08,0x04,0x02,0x04,0x08,0x10},
-    /* '.' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x04},
-    /* 'a'-'z' lowercase */
-    {0x00,0x00,0x0E,0x01,0x0F,0x11,0x0F},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x1E},
-    {0x00,0x00,0x0E,0x11,0x10,0x11,0x0E},
-    {0x01,0x01,0x0F,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E},
-    {0x06,0x08,0x08,0x1C,0x08,0x08,0x08},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x0E},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x11},
-    {0x04,0x00,0x0C,0x04,0x04,0x04,0x0E},
-    {0x02,0x00,0x06,0x02,0x02,0x12,0x0C},
-    {0x10,0x10,0x12,0x14,0x18,0x14,0x12},
-    {0x0C,0x04,0x04,0x04,0x04,0x04,0x0E},
-    {0x00,0x00,0x1A,0x15,0x15,0x15,0x15},
-    {0x00,0x00,0x1E,0x11,0x11,0x11,0x11},
-    {0x00,0x00,0x0E,0x11,0x11,0x11,0x0E},
-    {0x00,0x00,0x1E,0x11,0x1E,0x10,0x10},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x01},
-    {0x00,0x00,0x16,0x19,0x10,0x10,0x10},
-    {0x00,0x00,0x0F,0x10,0x0E,0x01,0x1E},
-    {0x08,0x08,0x1C,0x08,0x08,0x09,0x06},
-    {0x00,0x00,0x11,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x11,0x11,0x11,0x0A,0x04},
-    {0x00,0x00,0x11,0x11,0x15,0x15,0x0A},
-    {0x00,0x00,0x11,0x0A,0x04,0x0A,0x11},
-    {0x00,0x00,0x11,0x11,0x0F,0x01,0x0E},
-    {0x00,0x00,0x1F,0x02,0x04,0x08,0x1F},
-};
-
-static int gb_font_index(char c)
-{
-    if (c == ' ')  return 0;
-    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-    if (c == '!')  return 27;
-    if (c == '>')  return 28;
-    if (c == '.')  return 29;
-    if (c >= 'a' && c <= 'z') return 30 + (c - 'a');
-    if (c >= '0' && c <= '9') return 0; /* digits not in font — show space */
-    return 0;
-}
-
-/* RGB565 (the reference had them byte-swapped, which showed yellow as magenta) */
-#define GB_COLOR_BLACK     0x0000
-#define GB_COLOR_WHITE     0xFFFF
-#define GB_COLOR_YELLOW    0xFFE0
-#define GB_COLOR_DKGRAY    0x2108
-#define GB_COLOR_GREEN     0x07E0
-#define GB_COLOR_CYAN      0x07FF
-
-static void gb_draw_char(uint16_t *fb, int px, int py, char c, uint16_t color)
-{
-    int idx = gb_font_index(c);
-    const uint8_t *glyph = gb_font5x7[idx];
-    for (int row = 0; row < 7; row++) {
-        int yy = py + row;
-        if (yy < 0 || yy >= 240) continue;
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 5; col++) {
-            int xx = px + col;
-            if (xx < 0 || xx >= 320) continue;
-            if (bits & (0x10 >> col)) {
-                fb[yy * 320 + xx] = color;
-            }
-        }
-    }
-}
-
-static void gb_draw_string(uint16_t *fb, int px, int py, const char *str, uint16_t color)
-{
-    while (*str) {
-        gb_draw_char(fb, px, py, *str, color);
-        px += 6;
-        str++;
-    }
-}
-
-static void gb_fill_rect(uint16_t *fb, int x, int y, int w, int h, uint16_t color)
-{
-    for (int row = y; row < y + h && row < 240; row++) {
-        if (row < 0) continue;
-        for (int col = x; col < x + w && col < 320; col++) {
-            if (col < 0) continue;
-            fb[row * 320 + col] = color;
-        }
-    }
-}
-
-/* ─── Volume Overlay for GB/GBC ────────────────────────────────── */
-static void gb_show_volume_overlay(void)
-{
-    uint16_t *fb = display_get_emu_buffer();
-    if (!fb) return;
-
-    static const char *level_names[ODROID_VOLUME_LEVEL_COUNT] = {
-        "MUTE", "25%", "50%", "75%", "100%"
-    };
-
-    int level = (int)odroid_audio_volume_get();
-    int timeout = 25;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce: wait for volume button release */
-    for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    while (timeout > 0) {
-        odroid_display_lock_gb_display();
-
-        int box_w = 140, box_h = 34;
-        int box_x = (320 - box_w) / 2, box_y = 8;
-
-        gb_fill_rect(fb, box_x, box_y, box_w, box_h, GB_COLOR_BLACK);
-        gb_fill_rect(fb, box_x, box_y, box_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x, box_y + box_h - 1, box_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x, box_y, 1, box_h, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x + box_w - 1, box_y, 1, box_h, GB_COLOR_WHITE);
-
-        char title[32];
-        snprintf(title, sizeof(title), "VOLUME: %s", level_names[level]);
-        int title_w = strlen(title) * 6;
-        gb_draw_string(fb, box_x + (box_w - title_w) / 2, box_y + 4, title, GB_COLOR_YELLOW);
-
-        int bar_x = box_x + 10, bar_y = box_y + 16, bar_w = box_w - 20, bar_h = 10;
-        gb_fill_rect(fb, bar_x, bar_y, bar_w, bar_h, GB_COLOR_DKGRAY);
-        if (level > 0) {
-            int fill_w = (bar_w * level) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            uint16_t bar_color = (level <= 1) ? GB_COLOR_GREEN :
-                                 (level <= 3) ? GB_COLOR_CYAN : GB_COLOR_YELLOW;
-            gb_fill_rect(fb, bar_x, bar_y, fill_w, bar_h, bar_color);
-        }
-        gb_fill_rect(fb, bar_x, bar_y, bar_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, bar_x, bar_y + bar_h - 1, bar_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, bar_x, bar_y, 1, bar_h, GB_COLOR_WHITE);
-        gb_fill_rect(fb, bar_x + bar_w - 1, bar_y, 1, bar_h, GB_COLOR_WHITE);
-        for (int i = 1; i < ODROID_VOLUME_LEVEL_COUNT - 1; i++) {
-            int sx = bar_x + (bar_w * i) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            gb_fill_rect(fb, sx, bar_y, 1, bar_h, GB_COLOR_WHITE);
-        }
-
-        display_emu_flush();
-        odroid_display_unlock_gb_display();
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-        bool changed = false;
-
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) { level--; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < ODROID_VOLUME_LEVEL_COUNT - 1) { level++; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-            changed = true;
-            timeout = 25;
-        }
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])) {
-            timeout = 0;
-        }
-        if (changed) {
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-        }
-        prev = state;
-        timeout--;
-    }
-}
 
 /* ─── Check / Delete save file for GB/GBC ──────────────────────── */
 extern const char* SD_BASE_PATH;
@@ -323,223 +112,6 @@ static bool gb_delete_save(void)
     odroid_sdcard_close();
     free(romPath);
     return ok;
-}
-
-/* ─── In-Game Menu for GB/GBC ──────────────────────────────────── */
-#define GB_MENU_RESUME     0
-#define GB_MENU_RESTART    1
-#define GB_MENU_SAVE       2
-#define GB_MENU_RELOAD     3
-#define GB_MENU_OVERWRITE  4
-#define GB_MENU_DELETE     5
-#define GB_MENU_EXIT       6
-
-/* Returns: true = keep running, false = exit game */
-static bool gb_show_ingame_menu(void)
-{
-    uint16_t *fb = display_get_emu_buffer();
-    if (!fb) return true;
-
-    bool has_save = gb_check_save_exists();
-
-    const char *labels[8];
-    int ids[8];
-    int count = 0;
-
-    labels[count] = "Resume Game";      ids[count] = GB_MENU_RESUME;    count++;
-    labels[count] = "Restart Game";     ids[count] = GB_MENU_RESTART;   count++;
-    labels[count] = "Save Game";        ids[count] = GB_MENU_SAVE;      count++;
-    if (has_save) {
-        labels[count] = "Reload Game";  ids[count] = GB_MENU_RELOAD;    count++;
-        labels[count] = "Overwrite Save"; ids[count] = GB_MENU_OVERWRITE; count++;
-        labels[count] = "Delete Save";  ids[count] = GB_MENU_DELETE;    count++;
-    }
-    labels[count] = "Exit Game";        ids[count] = GB_MENU_EXIT;      count++;
-
-    int selected = 0;
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce: wait for MENU button release */
-    for (int i = 0; i < 200; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_MENU]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    bool keep_running = true;
-    bool menu_active = true;
-    const char *flash_msg = NULL;
-    int flash_timer = 0;
-
-    while (menu_active) {
-        odroid_display_lock_gb_display();
-
-        int box_w = 160;
-        int box_h = 20 + count * 14 + 10;
-        int box_x = (320 - box_w) / 2;
-        int box_y = (240 - box_h) / 2;
-
-        gb_fill_rect(fb, box_x, box_y, box_w, box_h, GB_COLOR_BLACK);
-        gb_fill_rect(fb, box_x, box_y, box_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x, box_y + box_h - 1, box_w, 1, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x, box_y, 1, box_h, GB_COLOR_WHITE);
-        gb_fill_rect(fb, box_x + box_w - 1, box_y, 1, box_h, GB_COLOR_WHITE);
-
-        gb_draw_string(fb, box_x + (box_w - 9*6)/2, box_y + 5, "GAME MENU", GB_COLOR_YELLOW);
-
-        for (int i = 0; i < count; i++) {
-            int oy = box_y + 18 + i * 14;
-            int ox = box_x + 16;
-            uint16_t color = (i == selected) ? GB_COLOR_YELLOW : GB_COLOR_WHITE;
-            gb_fill_rect(fb, box_x + 2, oy - 1, box_w - 4, 10, GB_COLOR_BLACK);
-            if (i == selected) {
-                gb_draw_char(fb, box_x + 6, oy, '>', GB_COLOR_YELLOW);
-            }
-            gb_draw_string(fb, ox, oy, labels[i], color);
-        }
-
-        if (flash_msg && flash_timer > 0) {
-            int fw = strlen(flash_msg) * 6;
-            int fx = box_x + (box_w - fw) / 2;
-            int fy = box_y + box_h - 12;
-            gb_fill_rect(fb, box_x + 2, fy - 2, box_w - 4, 12, GB_COLOR_BLACK);
-            gb_draw_string(fb, fx, fy, flash_msg, GB_COLOR_GREEN);
-            flash_timer--;
-            if (flash_timer == 0) flash_msg = NULL;
-        }
-
-        display_emu_flush();
-        odroid_display_unlock_gb_display();
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (state.values[ODROID_INPUT_UP] && !prev.values[ODROID_INPUT_UP])
-            selected = (selected - 1 + count) % count;
-        if (state.values[ODROID_INPUT_DOWN] && !prev.values[ODROID_INPUT_DOWN])
-            selected = (selected + 1) % count;
-
-        /* B or MENU = resume */
-        if ((state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B]) ||
-            (state.values[ODROID_INPUT_MENU] && !prev.values[ODROID_INPUT_MENU])) {
-            menu_active = false;
-            keep_running = true;
-        }
-
-        /* A = select option */
-        if (state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) {
-            switch (ids[selected]) {
-                case GB_MENU_RESUME:
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-
-                case GB_MENU_RESTART:
-                    printf("GB InGameMenu: Restart Game\n");
-                    emu_reset();
-                    lcd_begin();
-                    sound_reset();
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-
-                case GB_MENU_RELOAD:
-                    printf("GB InGameMenu: Reload Game (full state)\n");
-                    {
-                        const char *ldPath = sram_get_savefile_path();
-                        if (ldPath) {
-                            FILE *lf = fopen(ldPath, "rb");
-                            if (lf) {
-                                loadstate(lf); fclose(lf);
-                                vram_dirty(); pal_dirty(); sound_dirty(); mem_updatemap();
-                            }
-                        }
-                    }
-                    flash_msg = "Loaded!";
-                    flash_timer = 15;
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-
-                case GB_MENU_SAVE:
-                    printf("GB InGameMenu: Save Game (full state)\n");
-                    {
-                        const char *savPath = sram_get_savefile_path();
-                        if (savPath) {
-                            FILE *sf = fopen(savPath, "wb");
-                            if (sf) { savestate(sf); fclose(sf); printf("GB: full state saved to %s\n", savPath); }
-                            else { printf("GB: failed to open %s for writing\n", savPath); }
-                        }
-                    }
-                    if (!has_save) {
-                        has_save = true;
-                        count = 0;
-                        labels[count] = "Resume Game";      ids[count] = GB_MENU_RESUME;    count++;
-                        labels[count] = "Restart Game";     ids[count] = GB_MENU_RESTART;   count++;
-                        labels[count] = "Save Game";        ids[count] = GB_MENU_SAVE;      count++;
-                        labels[count] = "Reload Game";      ids[count] = GB_MENU_RELOAD;    count++;
-                        labels[count] = "Overwrite Save";   ids[count] = GB_MENU_OVERWRITE; count++;
-                        labels[count] = "Delete Save";      ids[count] = GB_MENU_DELETE;    count++;
-                        labels[count] = "Exit Game";        ids[count] = GB_MENU_EXIT;      count++;
-                    }
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-
-                case GB_MENU_OVERWRITE:
-                    printf("GB InGameMenu: Overwrite Save (full state)\n");
-                    {
-                        const char *savPath2 = sram_get_savefile_path();
-                        if (savPath2) {
-                            FILE *sf2 = fopen(savPath2, "wb");
-                            if (sf2) { savestate(sf2); fclose(sf2); }
-                        }
-                    }
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-
-                case GB_MENU_DELETE:
-                    printf("GB InGameMenu: Delete Save\n");
-                    if (gb_delete_save()) {
-                        has_save = false;
-                        flash_msg = "Deleted!";
-                        flash_timer = 15;
-                        count = 0;
-                        labels[count] = "Resume Game";      ids[count] = GB_MENU_RESUME;    count++;
-                        labels[count] = "Restart Game";     ids[count] = GB_MENU_RESTART;   count++;
-                        labels[count] = "Save Game";        ids[count] = GB_MENU_SAVE;      count++;
-                        labels[count] = "Exit Game";        ids[count] = GB_MENU_EXIT;      count++;
-                        if (selected >= count) selected = count - 1;
-                    } else {
-                        flash_msg = "Error!";
-                        flash_timer = 15;
-                    }
-                    break;
-
-                case GB_MENU_EXIT:
-                    printf("GB InGameMenu: Exit Game — auto-saving full state\n");
-                    {
-                        const char *exitSavPath = sram_get_savefile_path();
-                        if (exitSavPath) {
-                            FILE *esf = fopen(exitSavPath, "wb");
-                            if (esf) { savestate(esf); fclose(esf); printf("GB: state saved on exit to %s\n", exitSavPath); }
-                        }
-                    }
-                    menu_active = false;
-                    keep_running = false;
-                    break;
-            }
-        }
-
-        prev = state;
-    }
-
-    return keep_running;
 }
 
 /* --- State --- */
@@ -654,6 +226,68 @@ static void audioTask(void *arg)
     odroid_audio_terminate();
     audioTaskIsRunning = false;
     vTaskDelete(NULL);
+}
+
+/* ─── In-Game Menu for GB/GBC (drawn by the launcher) ─────────── */
+static bool gb_save_state(void)
+{
+    const char *savPath = sram_get_savefile_path();
+    if (!savPath) return false;
+    FILE *sf = fopen(savPath, "wb");
+    if (!sf) { printf("GB: failed to open %s for writing\n", savPath); return false; }
+    savestate(sf);
+    fclose(sf);
+    printf("GB: full state saved to %s\n", savPath);
+    return true;
+}
+
+static void gb_load_state(void)
+{
+    const char *ldPath = sram_get_savefile_path();
+    if (!ldPath) return;
+    FILE *lf = fopen(ldPath, "rb");
+    if (!lf) return;
+    loadstate(lf);
+    fclose(lf);
+    vram_dirty(); pal_dirty(); sound_dirty(); mem_updatemap();
+}
+
+/* The launcher takes over the display during the menu: wait until the video
+ * task has presented the last queued frame (it receives only after presenting) */
+static void gb_video_idle(void)
+{
+    for (int i = 0; i < 500 && uxQueueMessagesWaiting(vidQueue); i++) vTaskDelay(1);
+}
+
+/* Returns: true = keep running, false = exit game */
+static bool gb_show_ingame_menu(void)
+{
+    gb_video_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, gb_check_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = gb_save_state() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = gb_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            gb_load_state();
+            return true;
+        case EMU_MENU_RESTART:
+            emu_reset();
+            lcd_begin();
+            sound_reset();
+            return true;
+        case EMU_MENU_EXIT:
+            printf("GB InGameMenu: Exit Game - auto-saving full state\n");
+            gb_save_state();
+            return false;
+        default:
+            return true;
+        }
+    }
 }
 
 /* ================================================================ */
@@ -811,11 +445,11 @@ void gnuboy_run(const char *rom_path)
             odroid_input_gamepad_read(&joystick);
         }
 
-        /* Volume button: show volume overlay */
+        /* Volume button: the launcher's volume dialog */
         if (!lastJoystickState.values[ODROID_INPUT_VOLUME] && joystick.values[ODROID_INPUT_VOLUME])
         {
-            gb_show_volume_overlay();
-            ESP_LOGI(TAG, "Volume: %d", odroid_audio_volume_get());
+            gb_video_idle();
+            odroid_emu_volume();
             /* Re-read gamepad state after overlay closes */
             odroid_input_gamepad_read(&joystick);
         }

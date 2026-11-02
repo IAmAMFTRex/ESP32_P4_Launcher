@@ -18,6 +18,7 @@ extern "C" {
 #include "odroid_input.h"
 #include "odroid_system.h"
 #include "odroid_display.h"
+#include "odroid_menu.h"
 }
 
 /* Handy core — globals are defined in system.cpp (which defines SYSTEM_CPP) */
@@ -43,8 +44,6 @@ bool skipNextFrame = false;
  * =================================================================== */
 #define LYNX_WIDTH        160
 #define LYNX_HEIGHT       102
-#define DISPLAY_WIDTH     320
-#define DISPLAY_HEIGHT    240
 #define AUDIO_SAMPLE_RATE 22050
 #define AUDIO_BUFFER_SIZE 2756
 
@@ -64,10 +63,6 @@ static int       hn_currentFB = 0;
 
 /* Save path */
 static char hn_save_path[256] = "";
-
-/* Volume */
-static int     volume_level = 3;
-static int     volume_show_frames = 0;
 
 /* FPS */
 static uint32_t fps_frame_count = 0;
@@ -227,22 +222,6 @@ static void hn_videoTask(void *arg)
                 }
             }
 
-            /* Volume overlay (at native 160×102 resolution) */
-            if (volume_show_frames > 0) {
-                volume_show_frames--;
-                const int bar_x = LYNX_WIDTH - 20;
-                const int bar_y = 2;
-                const int bar_w = 18;
-                const int bar_h = 4;
-                for (int yy = bar_y; yy < bar_y + bar_h; yy++)
-                    for (int xx = bar_x; xx < bar_x + bar_w; xx++)
-                        decodeBuf[yy * LYNX_WIDTH + xx] = 0x0000;
-                int fill_w = (bar_w * volume_level) / 4;
-                for (int yy = bar_y + 1; yy < bar_y + bar_h - 1; yy++)
-                    for (int xx = bar_x + 1; xx < bar_x + 1 + fill_w; xx++)
-                        decodeBuf[yy * LYNX_WIDTH + xx] = 0x07E0;
-            }
-
             /* PPA hardware-scale 160×102 → 320×240 and flush to LCD */
             ili9341_write_frame_lynx(decodeBuf);
         }
@@ -254,195 +233,26 @@ static void hn_videoTask(void *arg)
 }
 
 /* ===================================================================
- * 5×7 Bitmap Font for menu rendering
+ * Video task stop/start around launcher dialogs: the launcher owns the
+ * display while the menu or the volume dialog is up
  * =================================================================== */
-static const uint8_t hn_font5x7[][7] = {
-    /* ' ' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    /* 'A' */ {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'B' */ {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
-    /* 'C' */ {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
-    /* 'D' */ {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
-    /* 'E' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
-    /* 'F' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
-    /* 'G' */ {0x0E,0x11,0x10,0x17,0x11,0x11,0x0E},
-    /* 'H' */ {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'I' */ {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
-    /* 'J' */ {0x07,0x02,0x02,0x02,0x02,0x12,0x0C},
-    /* 'K' */ {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
-    /* 'L' */ {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
-    /* 'M' */ {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
-    /* 'N' */ {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
-    /* 'O' */ {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'P' */ {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
-    /* 'Q' */ {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
-    /* 'R' */ {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
-    /* 'S' */ {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},
-    /* 'T' */ {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
-    /* 'U' */ {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'V' */ {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
-    /* 'W' */ {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
-    /* 'X' */ {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
-    /* 'Y' */ {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
-    /* 'Z' */ {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
-    /* '!' */ {0x04,0x04,0x04,0x04,0x04,0x00,0x04},
-    /* '>' */ {0x10,0x08,0x04,0x02,0x04,0x08,0x10},
-    /* '.' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x04},
-    /* 'a'-'z' lowercase */
-    {0x00,0x00,0x0E,0x01,0x0F,0x11,0x0F},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x1E},
-    {0x00,0x00,0x0E,0x11,0x10,0x11,0x0E},
-    {0x01,0x01,0x0F,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E},
-    {0x06,0x08,0x08,0x1C,0x08,0x08,0x08},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x0E},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x11},
-    {0x04,0x00,0x0C,0x04,0x04,0x04,0x0E},
-    {0x02,0x00,0x06,0x02,0x02,0x12,0x0C},
-    {0x10,0x10,0x12,0x14,0x18,0x14,0x12},
-    {0x0C,0x04,0x04,0x04,0x04,0x04,0x0E},
-    {0x00,0x00,0x1A,0x15,0x15,0x15,0x15},
-    {0x00,0x00,0x1E,0x11,0x11,0x11,0x11},
-    {0x00,0x00,0x0E,0x11,0x11,0x11,0x0E},
-    {0x00,0x00,0x1E,0x11,0x1E,0x10,0x10},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x01},
-    {0x00,0x00,0x16,0x19,0x10,0x10,0x10},
-    {0x00,0x00,0x0F,0x10,0x0E,0x01,0x1E},
-    {0x08,0x08,0x1C,0x08,0x08,0x09,0x06},
-    {0x00,0x00,0x11,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x11,0x11,0x11,0x0A,0x04},
-    {0x00,0x00,0x11,0x11,0x15,0x15,0x0A},
-    {0x00,0x00,0x11,0x0A,0x04,0x0A,0x11},
-    {0x00,0x00,0x11,0x11,0x0F,0x01,0x0E},
-    {0x00,0x00,0x1F,0x02,0x04,0x08,0x1F},
-};
-
-static int hn_font_index(char c)
+static void hn_video_stop(void)
 {
-    if (c == ' ')  return 0;
-    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-    if (c == '!')  return 27;
-    if (c == '>')  return 28;
-    if (c == '.')  return 29;
-    if (c >= 'a' && c <= 'z') return 30 + (c - 'a');
-    return 0;
+    if (!hn_videoTaskIsRunning) return;
+    uint16_t *discard;
+    while (xQueueReceive(hn_vidQueue, &discard, 0) == pdTRUE) {}
+    uint16_t *stop = NULL;
+    xQueueOverwrite(hn_vidQueue, &stop);
+    int timeout = 500;
+    while (hn_videoTaskIsRunning && --timeout > 0) vTaskDelay(1);
 }
 
-static void hn_draw_char(uint16_t *fb, int px, int py, char c, uint16_t color)
+static void hn_video_start(void)
 {
-    int idx = hn_font_index(c);
-    const uint8_t *glyph = hn_font5x7[idx];
-    for (int row = 0; row < 7; row++) {
-        int yy = py + row;
-        if (yy < 0 || yy >= DISPLAY_HEIGHT) continue;
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 5; col++) {
-            int xx = px + col;
-            if (xx < 0 || xx >= DISPLAY_WIDTH) continue;
-            if (bits & (0x10 >> col))
-                fb[yy * DISPLAY_WIDTH + xx] = color;
-        }
-    }
-}
-
-static void hn_draw_string(uint16_t *fb, int px, int py, const char *str, uint16_t color)
-{
-    while (*str) {
-        hn_draw_char(fb, px, py, *str, color);
-        px += 6;
-        str++;
-    }
-}
-
-static void hn_fill_rect(uint16_t *fb, int x, int y, int w, int h, uint16_t color)
-{
-    for (int row = y; row < y + h && row < DISPLAY_HEIGHT; row++) {
-        if (row < 0) continue;
-        for (int col = x; col < x + w && col < DISPLAY_WIDTH; col++) {
-            if (col < 0) continue;
-            fb[row * DISPLAY_WIDTH + col] = color;
-        }
-    }
-}
-
-/* ===================================================================
- * In-game menu
- * =================================================================== */
-enum HnMenuChoice { HN_MENU_RESUME = 0, HN_MENU_SAVE, HN_MENU_LOAD, HN_MENU_EXIT };
-
-static int show_handy_menu(void)
-{
-    uint16_t *menu_fb = (uint16_t *)heap_caps_malloc(
-        DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    if (!menu_fb) return HN_MENU_RESUME;
-
-    const char *options[] = {"Resume Game", "Save State", "Load State", "Exit Game"};
-    const int count = 4;
-    int selected = 0;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    while (true)
-    {
-        /* Black background */
-        hn_fill_rect(menu_fb, 0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, 0x0000);
-
-        int box_w = 160;
-        int box_h = 20 + count * 14 + 10;
-        int box_x = (DISPLAY_WIDTH - box_w) / 2;
-        int box_y = (DISPLAY_HEIGHT - box_h) / 2;
-
-        /* Box with white border */
-        hn_fill_rect(menu_fb, box_x, box_y, box_w, box_h, 0x0000);
-        hn_fill_rect(menu_fb, box_x, box_y, box_w, 1, 0xFFFF);
-        hn_fill_rect(menu_fb, box_x, box_y + box_h - 1, box_w, 1, 0xFFFF);
-        hn_fill_rect(menu_fb, box_x, box_y, 1, box_h, 0xFFFF);
-        hn_fill_rect(menu_fb, box_x + box_w - 1, box_y, 1, box_h, 0xFFFF);
-
-        /* Title */
-        hn_draw_string(menu_fb, box_x + (box_w - 9*6)/2, box_y + 5, "GAME MENU", 0xFFE0);
-
-        /* Options */
-        for (int i = 0; i < count; i++) {
-            int oy = box_y + 18 + i * 14;
-            int ox = box_x + 16;
-            uint16_t color = (i == selected) ? 0xFFE0 : 0xFFFF;
-            hn_fill_rect(menu_fb, box_x + 2, oy - 1, box_w - 4, 10, 0x0000);
-            if (i == selected)
-                hn_draw_char(menu_fb, box_x + 6, oy, '>', 0xFFE0);
-            hn_draw_string(menu_fb, ox, oy, options[i], color);
-        }
-
-        ili9341_write_frame_rgb565(menu_fb);
-
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (!prev.values[ODROID_INPUT_DOWN] && state.values[ODROID_INPUT_DOWN])
-            selected = (selected + 1) % count;
-        if (!prev.values[ODROID_INPUT_UP] && state.values[ODROID_INPUT_UP])
-            selected = (selected - 1 + count) % count;
-        if (!prev.values[ODROID_INPUT_A] && state.values[ODROID_INPUT_A])
-            break;
-        if (!prev.values[ODROID_INPUT_B] && state.values[ODROID_INPUT_B]) {
-            selected = HN_MENU_RESUME;
-            break;
-        }
-        prev = state;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    /* Wait for release */
-    odroid_gamepad_state rel;
-    int timeout = 50;
-    do {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        odroid_input_gamepad_read(&rel);
-        if (--timeout <= 0) break;
-    } while (rel.values[ODROID_INPUT_A] || rel.values[ODROID_INPUT_B]);
-
-    free(menu_fb);
-    return selected;
+    if (hn_videoTaskIsRunning) return;
+    if (hn_vidQueue) { vQueueDelete(hn_vidQueue); hn_vidQueue = NULL; }
+    hn_vidQueue = xQueueCreate(1, sizeof(uint16_t *));
+    xTaskCreatePinnedToCore(hn_videoTask, "hn_vidTask", 4096, NULL, 5, &hn_videoTaskHandle, 1);
 }
 
 /* ===================================================================
@@ -500,6 +310,49 @@ static bool handy_load_state(void)
     return ok;
 }
 
+static bool handy_save_exists(void)
+{
+    struct stat st;
+    return hn_save_path[0] != '\0' && stat(hn_save_path, &st) == 0;
+}
+
+static bool handy_delete_save(void)
+{
+    return hn_save_path[0] != '\0' && remove(hn_save_path) == 0;
+}
+
+/* ===================================================================
+ * In-game menu (drawn by the launcher)
+ * =================================================================== */
+static void handy_game_menu(void)
+{
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, handy_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = handy_save_state() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = handy_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            handy_load_state();
+            return;
+        case EMU_MENU_RESTART:
+            /* Power cycle: keep the EEPROM (saved, then read back after the reset) */
+            hn_lynx->SaveEEPROM();
+            hn_lynx->Reset();
+            hn_lynx->mEEPROM->Load();
+            return;
+        case EMU_MENU_EXIT:
+            hn_exitRequested = true;
+            return;
+        default:
+            return;
+        }
+    }
+}
+
 /* ===================================================================
  * Input processing
  * =================================================================== */
@@ -524,47 +377,24 @@ static void hn_process_input(void)
     static bool prev_menu = false;
     if (state.values[ODROID_INPUT_MENU] && !prev_menu)
     {
-        /* Stop video task */
-        if (hn_videoTaskIsRunning) {
-            uint16_t *discard;
-            while (xQueueReceive(hn_vidQueue, &discard, 0) == pdTRUE) {}
-            uint16_t *stop = NULL;
-            xQueueOverwrite(hn_vidQueue, &stop);
-            int timeout = 500;
-            while (hn_videoTaskIsRunning && --timeout > 0) vTaskDelay(1);
-        }
-
-        int choice = show_handy_menu();
-        switch (choice) {
-            case HN_MENU_SAVE:
-                handy_save_state();
-                break;
-            case HN_MENU_LOAD:
-                handy_load_state();
-                break;
-            case HN_MENU_EXIT:
-                hn_exitRequested = true;
-                prev_menu = state.values[ODROID_INPUT_MENU];
-                return;
-            default:
-                break;
-        }
-
-        /* Restart video task */
-        if (!hn_videoTaskIsRunning) {
-            if (hn_vidQueue) { vQueueDelete(hn_vidQueue); hn_vidQueue = NULL; }
-            hn_vidQueue = xQueueCreate(1, sizeof(uint16_t *));
-            xTaskCreatePinnedToCore(hn_videoTask, "hn_vidTask", 4096, NULL, 5, &hn_videoTaskHandle, 1);
-        }
+        hn_video_stop();
+        handy_game_menu();
+        prev_menu = true;          /* a still-held button doesn't reopen it */
+        if (hn_exitRequested) return;
+        hn_video_start();
+        return;
     }
     prev_menu = state.values[ODROID_INPUT_MENU];
 
-    /* VOLUME button */
+    /* VOLUME button → the launcher's volume dialog */
     static bool prev_vol = false;
-    if (state.values[ODROID_INPUT_VOLUME] && !prev_vol) {
-        volume_level = (volume_level + 1) % 5;
-        odroid_audio_volume_set(volume_level);
-        volume_show_frames = 60;
+    if (state.values[ODROID_INPUT_VOLUME] && !prev_vol)
+    {
+        hn_video_stop();
+        odroid_emu_volume();
+        hn_video_start();
+        prev_vol = true;
+        return;
     }
     prev_vol = state.values[ODROID_INPUT_VOLUME];
 }

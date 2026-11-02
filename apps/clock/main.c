@@ -9,7 +9,7 @@
 #include <string.h>
 #include "papp/papp.h"
 
-PAPP_MANIFEST(.id = "tool.clock", .name = "Clock", .version = "1.0.0", .main_stack = 16384);
+PAPP_MANIFEST(.id = "tool.clock", .name = "Clock", .version = PAPP_APP_VERSION, .main_stack = 16384);
 
 #define W 400
 #define H 240

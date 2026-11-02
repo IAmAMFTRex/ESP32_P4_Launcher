@@ -2,7 +2,7 @@
  * stella_run.cpp — Atari 2600 (Stella) emulator wrapper for ESP32-P4
  *
  * Provides stella_run(rom_path) callable from C launcher.
- * Manages video task, in-game menu, save/load, volume overlay.
+ * Manages video task, in-game menu, save/load.
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -17,6 +17,7 @@ extern "C" {
 #include "odroid_input.h"
 #include "odroid_system.h"
 #include "odroid_display.h"
+#include "odroid_menu.h"
 }
 
 // Stella
@@ -88,10 +89,6 @@ static int32_t  *st_sampleBuffer = NULL;
 
 /* Save path */
 static char st_save_path[256] = "";
-
-/* Volume overlay */
-static int      volume_level = 3;   /* 0=mute,1=25%,2=50%,3=75%,4=100% */
-static int      volume_show_frames = 0;
 
 /* FPS counter */
 static uint32_t fps_frame_count = 0;
@@ -191,304 +188,14 @@ static void st_videoTask(void *arg)
 }
 
 /* ===================================================================
- * 5×7 Bitmap Font for menu rendering
+ * Waits until the video task has shown its last frame (it takes the frame
+ * off the queue only after presenting it): the launcher owns the display
+ * while the menu or the volume dialog is up
  * =================================================================== */
-static const uint8_t st_font5x7[][7] = {
-    /* ' ' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    /* 'A' */ {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'B' */ {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
-    /* 'C' */ {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
-    /* 'D' */ {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E},
-    /* 'E' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F},
-    /* 'F' */ {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10},
-    /* 'G' */ {0x0E,0x11,0x10,0x17,0x11,0x11,0x0E},
-    /* 'H' */ {0x11,0x11,0x11,0x1F,0x11,0x11,0x11},
-    /* 'I' */ {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E},
-    /* 'J' */ {0x07,0x02,0x02,0x02,0x02,0x12,0x0C},
-    /* 'K' */ {0x11,0x12,0x14,0x18,0x14,0x12,0x11},
-    /* 'L' */ {0x10,0x10,0x10,0x10,0x10,0x10,0x1F},
-    /* 'M' */ {0x11,0x1B,0x15,0x15,0x11,0x11,0x11},
-    /* 'N' */ {0x11,0x19,0x15,0x13,0x11,0x11,0x11},
-    /* 'O' */ {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'P' */ {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10},
-    /* 'Q' */ {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D},
-    /* 'R' */ {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11},
-    /* 'S' */ {0x0E,0x11,0x10,0x0E,0x01,0x11,0x0E},
-    /* 'T' */ {0x1F,0x04,0x04,0x04,0x04,0x04,0x04},
-    /* 'U' */ {0x11,0x11,0x11,0x11,0x11,0x11,0x0E},
-    /* 'V' */ {0x11,0x11,0x11,0x11,0x11,0x0A,0x04},
-    /* 'W' */ {0x11,0x11,0x11,0x15,0x15,0x1B,0x11},
-    /* 'X' */ {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11},
-    /* 'Y' */ {0x11,0x11,0x0A,0x04,0x04,0x04,0x04},
-    /* 'Z' */ {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F},
-    /* '!' */ {0x04,0x04,0x04,0x04,0x04,0x00,0x04},
-    /* '>' */ {0x10,0x08,0x04,0x02,0x04,0x08,0x10},
-    /* '.' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x04},
-    /* 'a'-'z' lowercase */
-    {0x00,0x00,0x0E,0x01,0x0F,0x11,0x0F},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x1E},
-    {0x00,0x00,0x0E,0x11,0x10,0x11,0x0E},
-    {0x01,0x01,0x0F,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x0E,0x11,0x1F,0x10,0x0E},
-    {0x06,0x08,0x08,0x1C,0x08,0x08,0x08},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x0E},
-    {0x10,0x10,0x1E,0x11,0x11,0x11,0x11},
-    {0x04,0x00,0x0C,0x04,0x04,0x04,0x0E},
-    {0x02,0x00,0x06,0x02,0x02,0x12,0x0C},
-    {0x10,0x10,0x12,0x14,0x18,0x14,0x12},
-    {0x0C,0x04,0x04,0x04,0x04,0x04,0x0E},
-    {0x00,0x00,0x1A,0x15,0x15,0x15,0x15},
-    {0x00,0x00,0x1E,0x11,0x11,0x11,0x11},
-    {0x00,0x00,0x0E,0x11,0x11,0x11,0x0E},
-    {0x00,0x00,0x1E,0x11,0x1E,0x10,0x10},
-    {0x00,0x00,0x0F,0x11,0x0F,0x01,0x01},
-    {0x00,0x00,0x16,0x19,0x10,0x10,0x10},
-    {0x00,0x00,0x0F,0x10,0x0E,0x01,0x1E},
-    {0x08,0x08,0x1C,0x08,0x08,0x09,0x06},
-    {0x00,0x00,0x11,0x11,0x11,0x11,0x0F},
-    {0x00,0x00,0x11,0x11,0x11,0x0A,0x04},
-    {0x00,0x00,0x11,0x11,0x15,0x15,0x0A},
-    {0x00,0x00,0x11,0x0A,0x04,0x0A,0x11},
-    {0x00,0x00,0x11,0x11,0x0F,0x01,0x0E},
-    {0x00,0x00,0x1F,0x02,0x04,0x08,0x1F},
-};
-
-static int st_font_index(char c)
+static void st_video_idle(void)
 {
-    if (c == ' ')  return 0;
-    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
-    if (c == '!')  return 27;
-    if (c == '>')  return 28;
-    if (c == '.')  return 29;
-    if (c >= 'a' && c <= 'z') return 30 + (c - 'a');
-    return 0;
-}
-
-static void st_draw_char(uint16_t *fb, int px, int py, char c, uint16_t color)
-{
-    int idx = st_font_index(c);
-    const uint8_t *glyph = st_font5x7[idx];
-    for (int row = 0; row < 7; row++) {
-        int yy = py + row;
-        if (yy < 0 || yy >= DISPLAY_HEIGHT) continue;
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 5; col++) {
-            int xx = px + col;
-            if (xx < 0 || xx >= DISPLAY_WIDTH) continue;
-            if (bits & (0x10 >> col))
-                fb[yy * DISPLAY_WIDTH + xx] = color;
-        }
-    }
-}
-
-static void st_draw_string(uint16_t *fb, int px, int py, const char *str, uint16_t color)
-{
-    while (*str) {
-        st_draw_char(fb, px, py, *str, color);
-        px += 6;
-        str++;
-    }
-}
-
-static void st_fill_rect(uint16_t *fb, int x, int y, int w, int h, uint16_t color)
-{
-    for (int row = y; row < y + h && row < DISPLAY_HEIGHT; row++) {
-        if (row < 0) continue;
-        for (int col = x; col < x + w && col < DISPLAY_WIDTH; col++) {
-            if (col < 0) continue;
-            fb[row * DISPLAY_WIDTH + col] = color;
-        }
-    }
-}
-
-/* ===================================================================
- * Volume Overlay (NES-style interactive)
- * =================================================================== */
-static void show_stella_volume_overlay(void)
-{
-    static const char *level_names[] = { "MUTE", "25%", "50%", "75%", "100%" };
-    const int num_levels = 5;
-
-    int level = (int)odroid_audio_volume_get();
-    int timeout = 25;  /* ~2 seconds at 80ms per frame */
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce: wait for volume button release */
-    for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    while (timeout > 0) {
-        /* Draw overlay onto the current display buffer */
-        int box_w = 140;
-        int box_h = 34;
-        int box_x = (DISPLAY_WIDTH - box_w) / 2;
-        int box_y = 8;
-
-        /* Dark background + white border */
-        st_fill_rect(st_displayBuffer, box_x, box_y, box_w, box_h, 0x0000);
-        st_fill_rect(st_displayBuffer, box_x, box_y, box_w, 1, 0xFFFF);
-        st_fill_rect(st_displayBuffer, box_x, box_y + box_h - 1, box_w, 1, 0xFFFF);
-        st_fill_rect(st_displayBuffer, box_x, box_y, 1, box_h, 0xFFFF);
-        st_fill_rect(st_displayBuffer, box_x + box_w - 1, box_y, 1, box_h, 0xFFFF);
-
-        /* Title */
-        char title[32];
-        snprintf(title, sizeof(title), "VOLUME: %s", level_names[level]);
-        int title_w = strlen(title) * 6;
-        st_draw_string(st_displayBuffer, box_x + (box_w - title_w) / 2, box_y + 4, title, 0xFFE0);
-
-        /* Bar background */
-        int bar_x = box_x + 10;
-        int bar_y = box_y + 16;
-        int bar_w = box_w - 20;
-        int bar_h = 10;
-        st_fill_rect(st_displayBuffer, bar_x, bar_y, bar_w, bar_h, 0x2108);
-
-        /* Filled portion */
-        if (level > 0) {
-            int fill_w = (bar_w * level) / (num_levels - 1);
-            uint16_t bar_color = (level <= 1) ? 0x07E0 :    /* green */
-                                 (level <= 3) ? 0x07FF :    /* cyan */
-                                                0xFFE0;     /* yellow */
-            st_fill_rect(st_displayBuffer, bar_x, bar_y, fill_w, bar_h, bar_color);
-        }
-
-        /* Bar border */
-        st_fill_rect(st_displayBuffer, bar_x, bar_y, bar_w, 1, 0xFFFF);
-        st_fill_rect(st_displayBuffer, bar_x, bar_y + bar_h - 1, bar_w, 1, 0xFFFF);
-        st_fill_rect(st_displayBuffer, bar_x, bar_y, 1, bar_h, 0xFFFF);
-        st_fill_rect(st_displayBuffer, bar_x + bar_w - 1, bar_y, 1, bar_h, 0xFFFF);
-
-        /* Segment markers */
-        for (int i = 1; i < num_levels - 1; i++) {
-            int sx = bar_x + (bar_w * i) / (num_levels - 1);
-            st_fill_rect(st_displayBuffer, sx, bar_y, 1, bar_h, 0xFFFF);
-        }
-
-        ili9341_write_frame_rgb565(st_displayBuffer);
-
-        /* Input */
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        bool changed = false;
-
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) { level--; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < num_levels - 1) { level++; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % num_levels;
-            changed = true;
-            timeout = 25;
-        }
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])) {
-            timeout = 0;
-        }
-
-        if (changed) {
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-        }
-
-        prev = state;
-        timeout--;
-    }
-}
-
-/* ===================================================================
- * In-game menu
- * =================================================================== */
-enum MenuChoice { MENU_RESUME = 0, MENU_SAVE, MENU_LOAD, MENU_EXIT };
-
-static int show_stella_menu(void)
-{
-    uint16_t *menu_fb = (uint16_t *)heap_caps_malloc(
-        DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-    if (!menu_fb) return MENU_RESUME;
-
-    const char *options[] = {"Resume Game", "Save State", "Load State", "Exit Game"};
-    const int count = 4;
-    int selected = 0;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    while (true)
-    {
-        /* Black background */
-        st_fill_rect(menu_fb, 0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, 0x0000);
-
-        int box_w = 160;
-        int box_h = 20 + count * 14 + 10;
-        int box_x = (DISPLAY_WIDTH - box_w) / 2;
-        int box_y = (DISPLAY_HEIGHT - box_h) / 2;
-
-        /* Box with white border */
-        st_fill_rect(menu_fb, box_x, box_y, box_w, box_h, 0x0000);
-        st_fill_rect(menu_fb, box_x, box_y, box_w, 1, 0xFFFF);
-        st_fill_rect(menu_fb, box_x, box_y + box_h - 1, box_w, 1, 0xFFFF);
-        st_fill_rect(menu_fb, box_x, box_y, 1, box_h, 0xFFFF);
-        st_fill_rect(menu_fb, box_x + box_w - 1, box_y, 1, box_h, 0xFFFF);
-
-        /* Title */
-        st_draw_string(menu_fb, box_x + (box_w - 9*6)/2, box_y + 5, "GAME MENU", 0xFFE0);
-
-        /* Options */
-        for (int i = 0; i < count; i++) {
-            int oy = box_y + 18 + i * 14;
-            int ox = box_x + 16;
-            uint16_t color = (i == selected) ? 0xFFE0 : 0xFFFF;
-            st_fill_rect(menu_fb, box_x + 2, oy - 1, box_w - 4, 10, 0x0000);
-            if (i == selected)
-                st_draw_char(menu_fb, box_x + 6, oy, '>', 0xFFE0);
-            st_draw_string(menu_fb, ox, oy, options[i], color);
-        }
-
-        ili9341_write_frame_rgb565(menu_fb);
-
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (!prev.values[ODROID_INPUT_DOWN] && state.values[ODROID_INPUT_DOWN])
-            selected = (selected + 1) % count;
-        if (!prev.values[ODROID_INPUT_UP] && state.values[ODROID_INPUT_UP])
-            selected = (selected - 1 + count) % count;
-        if (!prev.values[ODROID_INPUT_A] && state.values[ODROID_INPUT_A])
-            break;
-        if (!prev.values[ODROID_INPUT_B] && state.values[ODROID_INPUT_B]) {
-            selected = MENU_RESUME;
-            break;
-        }
-
-        prev = state;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-
-    /* Wait for key release */
-    odroid_gamepad_state rel;
-    int timeout = 50;
-    do {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        odroid_input_gamepad_read(&rel);
-        if (--timeout <= 0) break;
-    } while (rel.values[ODROID_INPUT_A] || rel.values[ODROID_INPUT_B]);
-
-    free(menu_fb);
-    return selected;
+    for (int t = 0; t < 100 && uxQueueMessagesWaiting(st_vidQueue); t++)
+        vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 /* ===================================================================
@@ -559,6 +266,48 @@ static bool stella_load_state(void)
     }
     printf("stella_run: State loaded OK from %s\n", st_save_path);
     return true;
+}
+
+static bool stella_save_exists(void)
+{
+    struct stat st;
+    return st_save_path[0] != '\0' && stat(st_save_path, &st) == 0;
+}
+
+static bool stella_delete_save(void)
+{
+    return st_save_path[0] != '\0' && remove(st_save_path) == 0;
+}
+
+/* ===================================================================
+ * In-game menu (drawn by the launcher)
+ * =================================================================== */
+static void stella_game_menu(void)
+{
+    st_video_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, stella_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = stella_save_state() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = stella_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            stella_load_state();
+            return;
+        case EMU_MENU_RESTART:
+            /* Power-on reset of the console */
+            st_console->system().reset();
+            return;
+        case EMU_MENU_EXIT:
+            st_exitRequested = true;
+            return;
+        default:
+            return;
+        }
+    }
 }
 
 /* ===================================================================
@@ -867,25 +616,7 @@ extern "C" void stella_run(const char *rom_path)
         if (last_gamepad.values[ODROID_INPUT_MENU] &&
             !gamepad.values[ODROID_INPUT_MENU])
         {
-            /* Drain video queue */
-            uint8_t *dummy;
-            while (xQueueReceive(st_vidQueue, &dummy, 0) == pdTRUE) {}
-            vTaskDelay(pdMS_TO_TICKS(50));
-
-            int choice = show_stella_menu();
-            switch (choice) {
-            case MENU_SAVE:
-                stella_save_state();
-                break;
-            case MENU_LOAD:
-                stella_load_state();
-                break;
-            case MENU_EXIT:
-                st_exitRequested = true;
-                break;
-            default: /* RESUME */
-                break;
-            }
+            stella_game_menu();
 
             odroid_input_gamepad_read(&last_gamepad);
             if (st_exitRequested) break;
@@ -896,9 +627,9 @@ extern "C" void stella_run(const char *rom_path)
         if (!last_gamepad.values[ODROID_INPUT_VOLUME] &&
             gamepad.values[ODROID_INPUT_VOLUME])
         {
-            show_stella_volume_overlay();
-            volume_level = odroid_audio_volume_get();
-            printf("stella_run: Volume=%d\n", volume_level);
+            st_video_idle();
+            odroid_emu_volume();
+            odroid_input_gamepad_read(&gamepad);
         }
 
         stella_step(&gamepad);

@@ -18,7 +18,12 @@ extern "C" {
 #define PAPP_SDK_VERSION  0x00000100u   /* 0.1.0 */
 
 /* ── Manifest ───────────────────────────────────────────────────────────── */
-/* PAPP_MANIFEST(.id = "demo.hello", .name = "Hello", .version = "1.0.0", .main_stack = 16384); */
+/* PAPP_MANIFEST(.id = "demo.hello", .name = "Hello", .version = PAPP_APP_VERSION, .main_stack = 16384);
+ * PAPP_APP_VERSION comes from the version.txt beside the app's sources ("1.2.0"),
+ * which papp_build.py passes in; the launcher compares it with the online one. */
+#ifndef PAPP_APP_VERSION
+#define PAPP_APP_VERSION "1.0.0"
+#endif
 #define PAPP_MANIFEST(...)                                                       \
     __attribute__((section(".papp_manifest"), used))                             \
     const papp_manifest_t __papp_manifest = {                                    \

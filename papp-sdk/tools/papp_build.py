@@ -8,12 +8,16 @@ papp_build.py — compile, link and pack a PAPP app with the bare riscv32-esp-el
 Output: build/apps/<name>/<name>.papp (+ .elf, .map). No ESP-IDF project needed.
 An icon.png next to the first source file is copied to build/apps/<name>/ too
 (shown on the launcher home screen at 88x88; deploy uploads it with the app).
+The app's version comes from a version.txt ("1.2.0") next to the first source file,
+or next to the build script that called build(); it reaches the manifest as
+PAPP_APP_VERSION.
 (Interim driver until the CMake toolchain of WORKPLAN Phase 4.2.)
 """
 
 import argparse
 import glob
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -75,9 +79,24 @@ def copy_icon(src_dir, out_dir):
     shutil.copyfile(icon, os.path.join(out_dir, "icon.png"))
 
 
+def app_version(sources, version_dir=None):
+    """The version.txt of the app: version_dir, the first source's folder, or the
+    folder of the build script that is running (emulators share their main file)."""
+    dirs = [version_dir] if version_dir else [os.path.dirname(os.path.abspath(sources[0])),
+                                              os.path.dirname(os.path.abspath(sys.argv[0]))]
+    for d in dirs:
+        path = os.path.join(d, "version.txt")
+        if os.path.isfile(path):
+            v = open(path, encoding="utf-8").read().strip()
+            if not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", v):
+                sys.exit(f"papp_build: {path}: expected a version like 1.2.0, got {v!r}")
+            return v
+    return None
+
+
 def build(name, sources, includes=(), libc=False, out_dir=None, link_base=0, extra_cflags=(),
           fast_link_base=0, libc_glue=True, app_cflags=(), per_file_cflags=None, extra_ldflags=(),
-          icon_dir=None, jobs=None, extra_libs=()):
+          icon_dir=None, jobs=None, extra_libs=(), version_dir=None):
     """extra_cflags: every file; app_cflags: the app's sources only (not the SDK
     runtime); per_file_cflags: {source: [flags]} appended last. libc_glue=False
     links newlib without the SDK's libc_glue.c (the app brings its own)."""
@@ -97,6 +116,9 @@ def build(name, sources, includes=(), libc=False, out_dir=None, link_base=0, ext
     if not libc:
         cflags += ["-ffreestanding", "-fno-tree-loop-distribute-patterns"]
 
+    version = app_version(sources, version_dir)
+    if version:
+        app_cflags = list(app_cflags) + [f'-DPAPP_APP_VERSION="{version}"']
     per_file_cflags = per_file_cflags or {}
     jobs_list = []
     for i, src in enumerate(runtime + list(sources)):
@@ -140,7 +162,7 @@ def build(name, sources, includes=(), libc=False, out_dir=None, link_base=0, ext
     except papp_pack.PackError as e:
         sys.exit(f"papp_pack: error: {e}")
     copy_icon(icon_dir or os.path.dirname(os.path.abspath(sources[0])), out_dir)
-    print(f"{name}: {papp} (image {len(img.image):,} B, bss {img.bss_size:,} B, "
+    print(f"{name}: {papp} (v{version or ' none: no version.txt'}, image {len(img.image):,} B, bss {img.bss_size:,} B, "
           f"{len(img.relocs)} relocs, {img.imports_count} imports"
           + (f", FAST {len(img.fast):,} B + bss {img.fast_bss_size:,} B" if img.fast or img.fast_bss_size else "")
           + ")")

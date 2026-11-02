@@ -33,7 +33,7 @@
 #include "odroid_input.h"
 #include "odroid_audio.h"
 #include "odroid_settings.h"
-#include "st7701_lcd.h"
+#include "odroid_menu.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -257,172 +257,6 @@ static void loading_screen_refresh(void) {
     ili9341_write_frame_rgb565_custom(ls_fb, LS_W, LS_H, 2.0f, false);
 }
 
-/* ──────────────────────────────────────────────────────
- * Sidebar buttons + in-game menu/volume overlays
- * (same pattern as SNES emulator)
- * ────────────────────────────────────────────────────── */
-
-/* 5×5 bitmap font for menu overlays (A-Z only) */
-static const uint8_t menu_font5x5[][5] = {
-    /* A */ {0x0E,0x11,0x1F,0x11,0x11},
-    /* B */ {0x1E,0x11,0x1E,0x11,0x1E},
-    /* C */ {0x0F,0x10,0x10,0x10,0x0F},
-    /* D */ {0x1E,0x11,0x11,0x11,0x1E},
-    /* E */ {0x1F,0x10,0x1E,0x10,0x1F},
-    /* F */ {0x1F,0x10,0x1E,0x10,0x10},
-    /* G */ {0x0F,0x10,0x13,0x11,0x0F},
-    /* H */ {0x11,0x11,0x1F,0x11,0x11},
-    /* I */ {0x0E,0x04,0x04,0x04,0x0E},
-    /* J */ {0x01,0x01,0x01,0x11,0x0E},
-    /* K */ {0x11,0x12,0x1C,0x12,0x11},
-    /* L */ {0x10,0x10,0x10,0x10,0x1F},
-    /* M */ {0x11,0x1B,0x15,0x11,0x11},
-    /* N */ {0x11,0x19,0x15,0x13,0x11},
-    /* O */ {0x0E,0x11,0x11,0x11,0x0E},
-    /* P */ {0x1E,0x11,0x1E,0x10,0x10},
-    /* Q */ {0x0E,0x11,0x15,0x12,0x0D},
-    /* R */ {0x1E,0x11,0x1E,0x12,0x11},
-    /* S */ {0x0F,0x10,0x0E,0x01,0x1E},
-    /* T */ {0x1F,0x04,0x04,0x04,0x04},
-    /* U */ {0x11,0x11,0x11,0x11,0x0E},
-    /* V */ {0x11,0x11,0x11,0x0A,0x04},
-    /* W */ {0x11,0x11,0x15,0x1B,0x11},
-    /* X */ {0x11,0x0A,0x04,0x0A,0x11},
-    /* Y */ {0x11,0x0A,0x04,0x04,0x04},
-    /* Z */ {0x1F,0x02,0x04,0x08,0x1F},
-};
-
-static void menu_draw_char(uint16_t *fb, int fbw, int fbh, int cx, int cy, char ch, uint16_t color)
-{
-    int idx = -1;
-    if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-    else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-    if (idx < 0) return;
-    for (int row = 0; row < 5; row++)
-        for (int col = 0; col < 5; col++)
-            if (menu_font5x5[idx][row] & (0x10 >> col))
-                if ((cy + row) < fbh && (cx + col) < fbw)
-                    fb[(cy + row) * fbw + (cx + col)] = color;
-}
-
-static void menu_draw_str(uint16_t *fb, int fbw, int fbh, int x, int y, const char *s, uint16_t color)
-{
-    while (*s) { menu_draw_char(fb, fbw, fbh, x, y, *s++, color); x += 6; }
-}
-
-static void menu_draw_num(uint16_t *fb, int fbw, int fbh, int x, int y, int val, uint16_t color)
-{
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%d", val);
-    /* Draw digits as small 3x5 bitmaps */
-    static const uint8_t digit_font[][5] = {
-        /* 0 */ {0x07,0x05,0x05,0x05,0x07},
-        /* 1 */ {0x02,0x06,0x02,0x02,0x07},
-        /* 2 */ {0x07,0x01,0x07,0x04,0x07},
-        /* 3 */ {0x07,0x01,0x07,0x01,0x07},
-        /* 4 */ {0x05,0x05,0x07,0x01,0x01},
-        /* 5 */ {0x07,0x04,0x07,0x01,0x07},
-        /* 6 */ {0x07,0x04,0x07,0x05,0x07},
-        /* 7 */ {0x07,0x01,0x01,0x01,0x01},
-        /* 8 */ {0x07,0x05,0x07,0x05,0x07},
-        /* 9 */ {0x07,0x05,0x07,0x01,0x07},
-    };
-    for (const char *p = buf; *p; p++) {
-        if (*p >= '0' && *p <= '9') {
-            int d = *p - '0';
-            for (int row = 0; row < 5; row++)
-                for (int col = 0; col < 3; col++)
-                    if (digit_font[d][row] & (0x04 >> col))
-                        if ((y + row) < fbh && (x + col) < fbw)
-                            fb[(y + row) * fbw + (x + col)] = color;
-        }
-        x += 4;
-    }
-}
-
-/* Sidebar button buffers (portrait coords, drawn once to DPI FB) */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } neo_sidebar_btns[] = {
-    { "MENU", 200,  2,  80, 90 },    /* landscape LEFT sidebar  (portrait top,    game starts y=96) */
-    { "VOL",  200, 708, 80, 84 },    /* landscape RIGHT sidebar (portrait bottom, game ends   y=704) */
-};
-static int sidebar_countdown = 2;  /* blit sidebar for first N frames */
-
-static void neo_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = neo_sidebar_btns[b].pw, ph = neo_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
-        }
-
-        /* Render text rotated for landscape reading */
-        const char *s = neo_sidebar_btns[b].text;
-        int nch = 0;
-        for (const char *p = s; *p; p++) nch++;
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_by = oy + ci * (CW + GAP);
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (menu_font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered", b, neo_sidebar_btns[b].text);
-    }
-}
-
-static void neo_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)neo_sidebar_btns[b].px, (uint16_t)neo_sidebar_btns[b].py,
-            (uint16_t)neo_sidebar_btns[b].pw, (uint16_t)neo_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
-    }
-}
-
 /* Neo Geo visible framebuffer dimensions */
 #define NEO_FB_W 304
 #define NEO_FB_H 224
@@ -440,219 +274,6 @@ static uint16_t *lcd_fb;
 /* Forward declarations for save state pixel buffers (defined later with other globals) */
 static uint8_t *state_img_pixels;     /* 304*224*2 bytes in PSRAM */
 static uint8_t *state_img_tmp_pixels;  /* 304*224*2 bytes in PSRAM */
-
-static void neo_show_volume(void)
-{
-    static const char * const level_names[] = { "MUTE", "LOW", "MED", "HIGH", "MAX" };
-
-    int level = (int)odroid_audio_volume_get();
-    level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-    odroid_audio_volume_set(level);
-    odroid_settings_Volume_set(level);
-
-    int timeout = 25;
-
-    if (!lcd_fb) return;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce: wait for volume button release */
-    for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    while (timeout > 0) {
-        int box_w = 140, box_h = 34;
-        int box_x = (NEO_FB_W - box_w) / 2;
-        int box_y = 4;
-
-        /* Dark background + border */
-        for (int r = box_y; r < box_y + box_h && r < NEO_FB_H; r++)
-            for (int c = box_x; c < box_x + box_w && c < NEO_FB_W; c++)
-                lcd_fb[r * NEO_FB_W + c] = COL_BLACK;
-        for (int c = box_x; c < box_x + box_w; c++) {
-            if (box_y < NEO_FB_H) lcd_fb[box_y * NEO_FB_W + c] = COL_WHITE;
-            if (box_y + box_h - 1 < NEO_FB_H) lcd_fb[(box_y + box_h - 1) * NEO_FB_W + c] = COL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h && r < NEO_FB_H; r++) {
-            lcd_fb[r * NEO_FB_W + box_x] = COL_WHITE;
-            lcd_fb[r * NEO_FB_W + box_x + box_w - 1] = COL_WHITE;
-        }
-
-        /* Title */
-        char title[32];
-        snprintf(title, sizeof(title), "VOL %s", level_names[level]);
-        menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 8, box_y + 4, title, COL_YELLOW);
-
-        /* Volume bar */
-        int bar_x = box_x + 6;
-        int bar_y = box_y + 16;
-        int bar_w = box_w - 12;
-        int bar_h = 10;
-        for (int r = bar_y; r < bar_y + bar_h && r < NEO_FB_H; r++)
-            for (int c = bar_x; c < bar_x + bar_w && c < NEO_FB_W; c++)
-                lcd_fb[r * NEO_FB_W + c] = COL_DKGRAY;
-        if (level > 0) {
-            int fill = (bar_w * level) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            uint16_t bar_col = (level <= 1) ? COL_GREEN : (level <= 3) ? COL_CYAN : COL_YELLOW;
-            for (int r = bar_y; r < bar_y + bar_h && r < NEO_FB_H; r++)
-                for (int c = bar_x; c < bar_x + fill && c < NEO_FB_W; c++)
-                    lcd_fb[r * NEO_FB_W + c] = bar_col;
-        }
-
-        ili9341_write_frame_rgb565_custom(lcd_fb, NEO_FB_W, NEO_FB_H, 2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) level--;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < ODROID_VOLUME_LEVEL_COUNT - 1) level++;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-            timeout = 25;
-        }
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])) {
-            break;
-        }
-
-        prev = state;
-        timeout--;
-    }
-}
-
-static bool neo_show_menu(void)
-{
-    if (!lcd_fb) return false;
-
-    int sel = 0;
-    const int ITEMS = 4;
-    const char *labels[] = { "RESUME", "SAVE STATE", "LOAD STATE", "EXIT GAME" };
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    /* Debounce menu button */
-    for (int i = 0; i < 50; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_MENU]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    while (1) {
-        int box_w = 140, box_h = 18 + ITEMS * 14;
-        int box_x = (NEO_FB_W - box_w) / 2;
-        int box_y = (NEO_FB_H - box_h) / 2;
-
-        /* Background box */
-        for (int r = box_y; r < box_y + box_h && r < NEO_FB_H; r++)
-            for (int c = box_x; c < box_x + box_w && c < NEO_FB_W; c++)
-                lcd_fb[r * NEO_FB_W + c] = COL_BLACK;
-
-        /* Border */
-        for (int c = box_x; c < box_x + box_w; c++) {
-            lcd_fb[box_y * NEO_FB_W + c] = COL_WHITE;
-            lcd_fb[(box_y + box_h - 1) * NEO_FB_W + c] = COL_WHITE;
-        }
-        for (int r = box_y; r < box_y + box_h; r++) {
-            lcd_fb[r * NEO_FB_W + box_x] = COL_WHITE;
-            lcd_fb[r * NEO_FB_W + box_x + box_w - 1] = COL_WHITE;
-        }
-
-        /* Menu items */
-        for (int i = 0; i < ITEMS; i++) {
-            uint16_t color = (i == sel) ? COL_GREEN : COL_WHITE;
-            int ty = box_y + 10 + i * 14;
-            int tx = box_x + 20;
-
-            /* Selection arrow */
-            if (i == sel) {
-                for (int dy = 0; dy < 5; dy++)
-                    for (int dx = 0; dx < 3; dx++)
-                        if ((ty + dy) < NEO_FB_H && (tx - 10 + dx) < NEO_FB_W)
-                            lcd_fb[(ty + dy) * NEO_FB_W + tx - 10 + dx] = color;
-            }
-
-            menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, tx, ty, labels[i], color);
-        }
-
-        ili9341_write_frame_rgb565_custom(lcd_fb, NEO_FB_W, NEO_FB_H, 2.0f, false);
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-
-        odroid_gamepad_state gp;
-        odroid_input_gamepad_read(&gp);
-
-        if (gp.values[ODROID_INPUT_UP] && !prev.values[ODROID_INPUT_UP])
-            sel = (sel - 1 + ITEMS) % ITEMS;
-        if (gp.values[ODROID_INPUT_DOWN] && !prev.values[ODROID_INPUT_DOWN])
-            sel = (sel + 1) % ITEMS;
-        if (gp.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) {
-            if (sel == 0) return false;  /* Resume */
-            if (sel == 1) {              /* Save State */
-                if (conf.game && state_img_pixels) {
-                    /* Copy current visible frame into state_img for the screenshot */
-                    uint16_t *other_fb = lcd_fb_arr[lcd_fb_write ^ 1];
-                    memcpy(state_img_pixels, other_fb, 304 * 224 * 2);
-                    /* Ensure save directory exists */
-                    struct stat st;
-                    if (stat(ROOTPATH "save", &st) == -1)
-                        mkdir(ROOTPATH "save", 0777);
-                    if (save_state(conf.game, 0) == 1) {
-                        menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 20, box_y + box_h + 4, "SAVED!", COL_GREEN);
-                    } else {
-                        menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 20, box_y + box_h + 4, "SAVE FAILED", COL_RED);
-                    }
-                    ili9341_write_frame_rgb565_custom(lcd_fb, NEO_FB_W, NEO_FB_H, 2.0f, false);
-                    vTaskDelay(pdMS_TO_TICKS(800));
-                }
-                return false;
-            }
-            if (sel == 2) {              /* Load State */
-                if (conf.game && state_img_tmp_pixels) {
-                    if (how_many_slot(conf.game) > 0) {
-                        if (load_state(conf.game, 0) == 1) {
-                            menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 20, box_y + box_h + 4, "LOADED!", COL_GREEN);
-                        } else {
-                            menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 20, box_y + box_h + 4, "LOAD FAILED", COL_RED);
-                        }
-                    } else {
-                        menu_draw_str(lcd_fb, NEO_FB_W, NEO_FB_H, box_x + 20, box_y + box_h + 4, "NO SAVE FOUND", COL_YELLOW);
-                    }
-                    ili9341_write_frame_rgb565_custom(lcd_fb, NEO_FB_W, NEO_FB_H, 2.0f, false);
-                    vTaskDelay(pdMS_TO_TICKS(800));
-                }
-                return false;
-            }
-            if (sel == 3) return true;   /* Exit */
-        }
-        if (gp.values[ODROID_INPUT_MENU] && !prev.values[ODROID_INPUT_MENU])
-            return false;
-        if (gp.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B])
-            return false;
-
-        prev = gp;
-    }
-}
 
 /* ──────────────────────────────────────────────────────
  * Screen globals (declared in screen.h as non-extern!)
@@ -749,12 +370,6 @@ static void neo_video_task(void *arg) {
 
         ili9341_write_frame_rgb565_custom(frame, NEO_FB_W, NEO_FB_H, 2.0f, false);
 
-        /* Blit sidebar button labels after frame push */
-        if (sidebar_countdown > 0) {
-            neo_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-
         xQueueReceive(neo_vidQueue, &frame, portMAX_DELAY);
     }
 
@@ -825,10 +440,6 @@ int screen_init(void) {
     /* Video task is created lazily in screen_update() so it doesn't
      * consume internal DMA RAM before the sprite bounce buffer is
      * allocated during ROM loading. */
-
-    /* Pre-render sidebar button labels (MENU / VOL) */
-    neo_init_sidebar_buttons();
-    sidebar_countdown = 2;
 
     /* Allocate state_img / state_img_tmp pixel buffers for save states.
      * 304×224 @ 16bpp = 136,192 bytes each.  We set .pixels here so
@@ -909,10 +520,6 @@ void screen_update(void) {
     } else {
         /* Fallback: synchronous push */
         ili9341_write_frame_rgb565_custom(lcd_fb, vis_w, vis_h, 2.0f, false);
-        if (sidebar_countdown > 0) {
-            neo_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
     }
 }
 
@@ -974,6 +581,7 @@ typedef enum {
 static QueueHandle_t z80_cmd_queue = NULL;
 static SemaphoreHandle_t z80_frame_done_sem = NULL;
 static volatile bool z80_task_running = false;
+static volatile bool z80_frame_busy = false;   /* a Z80_CMD_FRAME is queued or running */
 
 /* Z80 timeslice parameters (set during init) */
 static int z80_nb_interlace = 16;
@@ -1064,6 +672,7 @@ static void z80_sound_task(void *arg) {
                 }
 
                 /* Signal emu loop that Z80 frame is done */
+                z80_frame_busy = false;
                 xSemaphoreGive(z80_frame_done_sem);
                 break;
             }
@@ -1108,8 +717,6 @@ int init_sdl_audio(void) {
     memcpy(obtain, desired, sizeof(SDL_AudioSpec));
 
     odroid_audio_init(conf.sample_rate);
-    /* Set volume to ~50% for comfortable debugging */
-    odroid_audio_volume_set(2); /* Level 2 of 4 = 50% */
 
     /* Compute Z80 timeslice */
     int z80_overclk = CF_VAL(cf_get_item_by_name("z80clock"));
@@ -1170,6 +777,7 @@ void esp32_z80_queue_nmi(void) {
 void esp32_z80_start_frame(void) {
     if (z80_cmd_queue) {
         z80_cmd_t cmd = Z80_CMD_FRAME;
+        z80_frame_busy = true;
         xQueueSend(z80_cmd_queue, &cmd, portMAX_DELAY);
     }
 }
@@ -1184,6 +792,88 @@ void esp32_z80_wait_frame(void) {
 /* Legacy stub — no longer called from emu loop */
 void esp32_audio_submit_frame(void) {
     /* Now handled inside z80_sound_task */
+}
+
+/* ──────────────────────────────────────────────────────
+ * In-game menu + volume (launcher-drawn, odroid_menu.h),
+ * opened by touching the left (menu) / right (volume) screen edge
+ * ────────────────────────────────────────────────────── */
+
+/* The launcher draws the menu and the volume dialog: wait until the video task
+ * has presented its last frame and the Z80 task has finished its frame, so
+ * neither touches the display or the core state while the dialog is up */
+static void neo_wait_idle(void)
+{
+    for (int i = 0; i < 100; i++) {
+        bool vid_busy = neo_vidQueue && uxQueueMessagesWaiting(neo_vidQueue) != 0;
+        bool z80_busy = z80_frame_busy || (z80_cmd_queue && uxQueueMessagesWaiting(z80_cmd_queue) != 0);
+        if (!vid_busy && !z80_busy) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+static bool neo_save_exists(void)
+{
+    return conf.game && state_img_tmp_pixels && how_many_slot(conf.game) > 0;
+}
+
+static bool neo_save(void)
+{
+    /* Copy current visible frame into state_img for the screenshot */
+    uint16_t *other_fb = lcd_fb_arr[lcd_fb_write ^ 1];
+    memcpy(state_img_pixels, other_fb, 304 * 224 * 2);
+    /* Ensure save directory exists */
+    struct stat st;
+    if (stat(ROOTPATH "save", &st) == -1)
+        mkdir(ROOTPATH "save", 0777);
+    return save_state(conf.game, 0) == 1;
+}
+
+/* Removes slot 0, the file save_state / load_state use */
+static bool neo_delete_save(void)
+{
+    char path[256];
+    snprintf(path, sizeof(path), ROOTPATH "save/%s.%03d", conf.game, 0);
+    return remove(path) == 0;
+}
+
+/* Reset button: 68K (neogeo_reset) and Z80, as at power-on */
+static void neo_restart(void)
+{
+    neogeo_reset();
+    cpu_z80_init();
+}
+
+/* Returns true when the game should exit */
+static bool neo_show_menu(void)
+{
+    neo_wait_idle();
+    unsigned flags = EMU_MENU_NO_SAVE;
+    if (conf.game && state_img_pixels)
+        flags = neo_save_exists() ? EMU_MENU_HAS_SAVE : 0;
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, flags)) {
+        case EMU_MENU_SAVE:
+            note = neo_save() ? "saved" : "save failed";
+            flags = neo_save_exists() ? EMU_MENU_HAS_SAVE : 0;
+            continue;
+        case EMU_MENU_DELETE:
+            note = neo_delete_save() ? "save deleted" : "delete failed";
+            flags = neo_save_exists() ? EMU_MENU_HAS_SAVE : 0;
+            continue;
+        case EMU_MENU_LOAD:
+            if (load_state(conf.game, 0) != 1) { note = "load failed"; continue; }
+            return false;
+        case EMU_MENU_RESTART:
+            neo_restart();
+            return false;
+        case EMU_MENU_EXIT:
+            return true;
+        default:
+            return false;
+        }
+    }
 }
 
 /* ──────────────────────────────────────────────────────
@@ -1218,8 +908,8 @@ int handle_event(void) {
 
     /* VOLUME: touch right shoulder or mapped button */
     if (gp.values[ODROID_INPUT_VOLUME] && !gp_prev.values[ODROID_INPUT_VOLUME]) {
-        neo_show_volume();
-        sidebar_countdown = 2;  /* re-draw sidebar labels after overlay */
+        neo_wait_idle();
+        odroid_emu_volume();
     }
 
     /* MENU: touch left shoulder */
@@ -1229,7 +919,6 @@ int handle_event(void) {
             gp_prev = gp;
             return 1;  /* non-zero = open menu → quit */
         }
-        sidebar_countdown = 2;  /* re-draw sidebar labels after overlay */
     }
 
     gp_prev = gp;

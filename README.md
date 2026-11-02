@@ -122,6 +122,8 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - DevLink: a USB protocol to upload, run, log, screenshot, inject input and read crash reports
 - Self-update from the SD card or from GitHub Releases (Settings → Update), with automatic rollback if a new
   version doesn't start. Each board only ever installs its own launcher
+- App catalogue: Settings → Apps lists the apps published on GitHub with the installed and online version,
+  and installs or updates them over Wi-Fi (checked with SHA-256)
 - Controllers: USB HID pads are read from their own report descriptor, Xbox 360-style (XInput) pads and receivers such as 8BitDo's work too, and any pad can be remapped in Settings
 - Wi-Fi and network time through the on-board ESP32-C6
 - Real-time clock on boards that have one: the time survives power-off, and the home screen clock opens a
@@ -129,7 +131,8 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - Battery level in the system bar, on boards that measure it
 - Wi-Fi file manager: a web page for the SD card, started from the Wi-Fi screen and protected by a PIN
 - Screenshots: Select + Y saves a BMP to `/sd/screenshots`
-- In-game menu: HOME pauses any game for volume, a screenshot or quitting
+- Game menu: every emulator has the same launcher-drawn menu (Resume, Save, Load, Restart, Delete save,
+  Volume, Exit), and HOME pauses any game for volume, a screenshot or quitting
 
 **Applications** (all built from this repository)
 
@@ -216,7 +219,8 @@ python tools/papp_dev.py --port COM9 deploy build/apps/doom/doom.papp --timeout 
 ```
 
 `deploy` uploads the app and its icon, runs it and streams its log. You can also copy files to the card
-directly: anything at `/sd/apps/<dir>/<file>.papp` appears on the home screen.
+directly: anything at `/sd/apps/<dir>/<file>.papp` appears on the home screen. Or, on Wi-Fi, take published
+apps from Settings → Apps (see [Versions and publishing](#versions-and-publishing)).
 
 ### 5. Update the launcher later
 
@@ -274,7 +278,7 @@ player 1.
 | App or folder menu | X or Y (Tab on a keyboard), or hold the icon: move an app, rename or delete a folder |
 | New folder | **New folder** at the top right. Type the name by touch or USB keyboard. With only a pad, A accepts the suggested name |
 | Browser | A runs, Y searches, X toggles a favorite, B goes back |
-| Most emulators | X opens the game menu, Y opens volume |
+| Most emulators | X or a tap on the left screen edge opens the game menu, Y or the right edge opens volume |
 | SNES, Genesis, Neo Geo | X and Y are game buttons, so tap the **left** screen edge for the menu and the **right** edge for volume |
 | Doom, OpenTyrian | X is the game's own menu, hold X for 3 s to exit |
 | Quake, Duke Nukem 3D | Tap the left edge for the menu, the right edge for volume, hold the left edge for 3 s to exit |
@@ -282,7 +286,9 @@ player 1.
 
 Choosing **Exit game** in an emulator returns to its ROM browser. Leaving the browser returns to the home screen.
 
-Exceptions from the original cores: on the Spectrum, Y opens the on-screen keyboard. NES has no volume overlay yet.
+Every emulator's game menu is drawn by the launcher and offers the same items: Resume game, Save game, Load
+saved game and Delete save (when there is a save), Restart game, Volume and Exit game. Volume is the
+launcher's volume, the same as in Settings. On the Spectrum, Y opens the on-screen keyboard instead of volume.
 
 ## Writing your own PAPP
 
@@ -291,7 +297,7 @@ A complete app, which bounces a square and exits on B:
 ```c
 #include "papp/papp.h"
 
-PAPP_MANIFEST(.id = "demo.bounce", .name = "Bounce", .version = "1.0.0", .main_stack = 16384);
+PAPP_MANIFEST(.id = "demo.bounce", .name = "Bounce", .version = PAPP_APP_VERSION, .main_stack = 16384);
 
 int main(int argc, char **argv)
 {
@@ -353,9 +359,27 @@ that calls `papp_build`. See [apps/nes/build.py](apps/nes/build.py), and
 |---|---|
 | `.id` | Unique id, such as `"demo.bounce"` |
 | `.name` | Name on the home screen |
-| `.version` | Version string |
+| `.version` | `PAPP_APP_VERSION`: the `version.txt` next to the app's sources, such as `1.2.0` |
 | `.main_stack` | Main stack size in bytes |
 | `.flags` | `PAPP_MF_STACK_PSRAM` puts the stack in PSRAM, `PAPP_MF_HIDDEN` marks a developer app |
+
+### Versions and publishing
+
+Each app keeps its version in a `version.txt` next to its first source file (or next to its `build.py`).
+`papp_build.py` passes it to the code as `PAPP_APP_VERSION`, and the home screen shows it in the app's menu
+(hold the icon, or X). When you change an app, raise its version, rebuild and publish:
+
+```powershell
+python apps/build_all.py
+python tools/make_apps_release.py --publish     # needs the GitHub CLI, logged in
+```
+
+This uploads every app that isn't a developer app, with its icon and `apps.json`, to the repository's `apps`
+release (a pre-release, so it never replaces the launcher's own latest release). Settings → Apps on a board
+then offers **Update** for each app whose online version is newer than the one on its card. An app is
+updated where it is, even if it was moved into a folder; a new app goes to the folder named in the catalogue
+(emulators to Emulators, games to Games). To try a catalogue from your own server first, build it with
+`--base http://<server>/` and put that `apps.json` address in `/sd/update/apps_url.txt`.
 
 ### Making hot code fast
 

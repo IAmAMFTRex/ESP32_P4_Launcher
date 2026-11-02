@@ -2,7 +2,7 @@
  * spectrum_run.c — Entry point for ZX Spectrum emulator on ESP32-P4
  *
  * Loads a .z80/.sna snapshot, runs the ZX Spectrum emulation loop,
- * handles in-game menu (X button), volume overlay (Y button),
+ * handles the in-game menu (X button), virtual keyboard (Y button),
  * save/load states, and returns on Exit Game.
  */
 
@@ -42,6 +42,7 @@
 #include "odroid_system.h"
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
+#include "odroid_menu.h"
 
 #define ZX_FB_WIDTH   320
 #define ZX_FB_HEIGHT  240
@@ -65,6 +66,7 @@ extern int showframe;
 
 static volatile bool zx_quit_flag = false;
 static volatile bool videoTaskIsRunning = false;
+static volatile bool zx_video_busy = false;   /* the video task is presenting a frame */
 
 static QueueHandle_t zx_vidQueue;
 static TaskHandle_t zx_videoTaskHandle;
@@ -146,32 +148,6 @@ static void zx_draw_char(uint16_t *fb, int x, int y, char c, uint16_t color) {
 
 static void zx_draw_string(uint16_t *fb, int x, int y, const char *str, uint16_t color) {
     while (*str) { zx_draw_char(fb, x, y, *str++, color); x += 6; }
-}
-
-/* ─── Volume Overlay ───────────────────────────────────────────── */
-static int zx_volume_level = 3;
-static int zx_volume_show_frames = 0;
-static const char *zx_vol_labels[] = { "MUTE", "25%", "50%", "75%", "100%" };
-
-static void zx_show_volume_overlay(uint16_t *fb) {
-    if (zx_volume_show_frames <= 0) return;
-    zx_volume_show_frames--;
-    int bx = (ZX_FB_WIDTH - 100) / 2, by = 4;
-    for (int y = by; y < by + 20; y++)
-        for (int x = bx; x < bx + 100; x++)
-            fb[y * ZX_FB_WIDTH + x] = 0x0000;
-    char label[16];
-    snprintf(label, sizeof(label), "VOL: %s", zx_vol_labels[zx_volume_level]);
-    zx_draw_string(fb, bx + 4, by + 7, label, 0xFFFF);
-    int filled = zx_volume_level * 20;
-    for (int y = by + 2; y < by + 5; y++)
-        for (int x = bx + 4; x < bx + 4 + filled; x++)
-            fb[y * ZX_FB_WIDTH + x] = 0x07E0;
-}
-
-static void zx_apply_volume(void) {
-    static const int vols[] = { 0, 25, 50, 75, 100 };
-    odroid_audio_volume_set(vols[zx_volume_level]);
 }
 
 /* ─── Virtual Keyboard Overlay ─────────────────────────────────── */
@@ -290,25 +266,20 @@ static void zx_video_task(void *arg)
     videoTaskIsRunning = true;
     while (1) {
         uint16_t *fb = NULL;
-        xQueueReceive(zx_vidQueue, &fb, portMAX_DELAY);
-        if (fb == NULL) break;  /* quit signal */
+        xQueuePeek(zx_vidQueue, &fb, portMAX_DELAY);
+        zx_video_busy = true;   /* before the frame leaves the queue (zx_video_idle) */
+        xQueueReceive(zx_vidQueue, &fb, 0);
+        if (fb == NULL) { zx_video_busy = false; break; }  /* quit signal */
 
         /* PPA does 2× scale + 270° rotation in one HW op */
         ili9341_write_frame_rgb565_ex(fb, false);
+        zx_video_busy = false;
     }
     videoTaskIsRunning = false;
     vTaskDelete(NULL);
 }
 
-/* ─── In-Game Menu ─────────────────────────────────────────────── */
-#define ZX_MENU_RESUME    0
-#define ZX_MENU_RESTART   1
-#define ZX_MENU_SAVE      2
-#define ZX_MENU_RELOAD    3
-#define ZX_MENU_OVERWRITE 4
-#define ZX_MENU_DELETE    5
-#define ZX_MENU_EXIT      6
-
+/* ─── In-Game Menu (drawn by the launcher) ────────────────────── */
 static const char *zx_rom_path_saved;  /* set at start of spectrum_run() */
 
 static bool zx_delete_save(void) {
@@ -320,163 +291,37 @@ static bool zx_delete_save(void) {
     return false;
 }
 
-static int zx_show_menu(uint16_t *fb) {
-    bool has_save = zx_save_exists();
+/* Waits until the video task has shown its last frame: the launcher owns the
+ * display while the menu is up, and the main loop is the only frame producer */
+static void zx_video_idle(void) {
+    for (int t = 0; t < 100 && (uxQueueMessagesWaiting(zx_vidQueue) || zx_video_busy); t++)
+        vTaskDelay(pdMS_TO_TICKS(5));
+}
 
-    /* Build option list dynamically */
-    const char *labels[8];
-    int ids[8];
-    int n = 0;
-
-    labels[n] = "Resume Game";    ids[n] = ZX_MENU_RESUME;    n++;
-    labels[n] = "Restart Game";   ids[n] = ZX_MENU_RESTART;   n++;
-    labels[n] = "Save Game";      ids[n] = ZX_MENU_SAVE;      n++;
-    if (has_save) {
-        labels[n] = "Reload Game";    ids[n] = ZX_MENU_RELOAD;    n++;
-        labels[n] = "Overwrite Save"; ids[n] = ZX_MENU_OVERWRITE; n++;
-        labels[n] = "Delete Save";    ids[n] = ZX_MENU_DELETE;    n++;
-    }
-    labels[n] = "Exit Game";     ids[n] = ZX_MENU_EXIT;      n++;
-
-    int sel = 0;
-    int bw = 160, bh = n * 18 + 20;
-    int bx = (ZX_FB_WIDTH - bw) / 2;
-    int by = (ZX_FB_HEIGHT - bh) / 2;
-
-    const char *flash_msg = NULL;
-    int flash_timer = 0;
-
-    while (1) {
-        bh = n * 18 + 20;
-        by = (ZX_FB_HEIGHT - bh) / 2;
-
-        /* Draw menu background */
-        for (int y = by; y < by + bh; y++)
-            for (int x = bx; x < bx + bw; x++)
-                fb[y * ZX_FB_WIDTH + x] = 0x0000;
-        /* Border */
-        for (int x = bx; x < bx + bw; x++) {
-            fb[by * ZX_FB_WIDTH + x] = 0xFFFF;
-            fb[(by + bh - 1) * ZX_FB_WIDTH + x] = 0xFFFF;
-        }
-        for (int y = by; y < by + bh; y++) {
-            fb[y * ZX_FB_WIDTH + bx] = 0xFFFF;
-            fb[y * ZX_FB_WIDTH + bx + bw - 1] = 0xFFFF;
-        }
-        /* Title */
-        zx_draw_string(fb, bx + 20, by + 6, "ZX SPECTRUM", 0x07FF);
-        /* Items */
-        for (int i = 0; i < n; i++) {
-            uint16_t color = (i == sel) ? 0xFFE0 : 0xFFFF;
-            int iy = by + 22 + i * 18;
-            /* Clear line */
-            for (int cx = bx + 2; cx < bx + bw - 2; cx++)
-                fb[iy * ZX_FB_WIDTH + cx] = 0x0000;
-            if (i == sel) zx_draw_char(fb, bx + 8, iy, '>', 0xFFE0);
-            zx_draw_string(fb, bx + 20, iy, labels[i], color);
-        }
-
-        /* Flash message */
-        if (flash_msg && flash_timer > 0) {
-            int fy = by + bh - 14;
-            for (int cx = bx + 2; cx < bx + bw - 2; cx++)
-                fb[fy * ZX_FB_WIDTH + cx] = 0x0000;
-            zx_draw_string(fb, bx + 20, fy, flash_msg, 0x07E0); /* green */
-            flash_timer--;
-            if (flash_timer == 0) flash_msg = NULL;
-        }
-
-        /* Push frame */
-        xQueueOverwrite(zx_vidQueue, &fb);
-        vTaskDelay(pdMS_TO_TICKS(80));
-
-        /* Read input */
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-        if (state.values[ODROID_INPUT_UP]) {
-            sel = (sel - 1 + n) % n;
-            while (state.values[ODROID_INPUT_UP]) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                odroid_input_gamepad_read(&state);
-            }
-        }
-        if (state.values[ODROID_INPUT_DOWN]) {
-            sel = (sel + 1) % n;
-            while (state.values[ODROID_INPUT_DOWN]) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                odroid_input_gamepad_read(&state);
-            }
-        }
-        if (state.values[ODROID_INPUT_A] || state.values[ODROID_INPUT_START]) {
-            while (state.values[ODROID_INPUT_A] || state.values[ODROID_INPUT_START]) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                odroid_input_gamepad_read(&state);
-            }
-
-            int action = ids[sel];
-
-            switch (action) {
-                case ZX_MENU_RESUME:
-                    return ZX_MENU_RESUME;
-
-                case ZX_MENU_RESTART:
-                    return ZX_MENU_RESTART;
-
-                case ZX_MENU_SAVE:
-                    zx_SaveState();
-                    if (!has_save) {
-                        has_save = true;
-                        /* Rebuild with save-dependent options */
-                        n = 0;
-                        labels[n] = "Resume Game";    ids[n] = ZX_MENU_RESUME;    n++;
-                        labels[n] = "Restart Game";   ids[n] = ZX_MENU_RESTART;   n++;
-                        labels[n] = "Save Game";      ids[n] = ZX_MENU_SAVE;      n++;
-                        labels[n] = "Reload Game";    ids[n] = ZX_MENU_RELOAD;    n++;
-                        labels[n] = "Overwrite Save"; ids[n] = ZX_MENU_OVERWRITE; n++;
-                        labels[n] = "Delete Save";    ids[n] = ZX_MENU_DELETE;    n++;
-                        labels[n] = "Exit Game";      ids[n] = ZX_MENU_EXIT;      n++;
-                    }
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-
-                case ZX_MENU_OVERWRITE:
-                    zx_SaveState();
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-
-                case ZX_MENU_RELOAD:
-                    zx_LoadState();
-                    return ZX_MENU_RELOAD;
-
-                case ZX_MENU_DELETE:
-                    if (zx_delete_save()) {
-                        has_save = false;
-                        /* Rebuild without save-dependent options */
-                        n = 0;
-                        labels[n] = "Resume Game";    ids[n] = ZX_MENU_RESUME;    n++;
-                        labels[n] = "Restart Game";   ids[n] = ZX_MENU_RESTART;   n++;
-                        labels[n] = "Save Game";      ids[n] = ZX_MENU_SAVE;      n++;
-                        labels[n] = "Exit Game";      ids[n] = ZX_MENU_EXIT;      n++;
-                        if (sel >= n) sel = n - 1;
-                        flash_msg = "Deleted!";
-                    } else {
-                        flash_msg = "Error!";
-                    }
-                    flash_timer = 15;
-                    break;
-
-                case ZX_MENU_EXIT:
-                    return ZX_MENU_EXIT;
-            }
-        }
-        if (state.values[ODROID_INPUT_B] || state.values[ODROID_INPUT_MENU]) {
-            while (state.values[ODROID_INPUT_B] || state.values[ODROID_INPUT_MENU]) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                odroid_input_gamepad_read(&state);
-            }
-            return ZX_MENU_RESUME;
+static void zx_game_menu(void) {
+    zx_video_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, zx_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = zx_SaveState() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = zx_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            zx_LoadState();
+            return;
+        case EMU_MENU_RESTART:
+            printf("ZX: Restarting from original ROM\n");
+            load_snapshot_file_type(zx_rom_path_saved, -1);
+            return;
+        case EMU_MENU_EXIT:
+            /* Exit without auto-saving — start fresh next time */
+            zx_quit_flag = true;
+            return;
+        default:
+            return;
         }
     }
 }
@@ -505,8 +350,6 @@ void spectrum_run(const char *rom_path)
     /* Init audio (beeper at ~15.6kHz) + AY-3-8912 PSG */
     odroid_audio_init(AUDIO_SAMPLE_RATE);
     ay_init(AUDIO_SAMPLE_RATE);
-    zx_volume_level = 3;
-    zx_apply_volume();
 
     /* Video queue + task */
     zx_vidQueue = xQueueCreate(1, sizeof(uint16_t *));
@@ -621,9 +464,6 @@ void spectrum_run(const char *rom_path)
             uint16_t *dst = lcdfb[lcdfb_write_idx];
             memcpy(dst, sp_framebuffer, ZX_FB_WIDTH * ZX_FB_HEIGHT * 2);
 
-            /* Volume overlay */
-            zx_show_volume_overlay(dst);
-
             /* Virtual keyboard overlay */
             zx_draw_vkb(dst);
 
@@ -633,37 +473,10 @@ void spectrum_run(const char *rom_path)
             lcdfb_write_idx = 1 - lcdfb_write_idx;
         }
 
-        /* Handle menu/volume buttons */
+        /* X button / left screen edge = in-game menu */
         if (sp_menu_request) {
+            zx_game_menu();
             sp_menu_request = 0;
-
-            /* Wait for button release */
-            odroid_gamepad_state gs;
-            do {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                odroid_input_gamepad_read(&gs);
-            } while (gs.values[ODROID_INPUT_MENU]);
-
-            /* Show in-game menu */
-            uint16_t *mfb = lcdfb[lcdfb_write_idx];
-            memcpy(mfb, sp_framebuffer, ZX_FB_WIDTH * ZX_FB_HEIGHT * 2);
-            /* No byte-swap needed — PPA does it in hardware */
-
-            int choice = zx_show_menu(mfb);
-
-            switch (choice) {
-                case ZX_MENU_RESUME:
-                case ZX_MENU_RELOAD:
-                    break;
-                case ZX_MENU_RESTART:
-                    printf("ZX: Restarting from original ROM\n");
-                    load_snapshot_file_type(zx_rom_path_saved, -1);
-                    break;
-                case ZX_MENU_EXIT:
-                    /* Exit without auto-saving — start fresh next time */
-                    zx_quit_flag = true;
-                    break;
-            }
             my_lastborder = 100; /* Force border redraw */
         }
 

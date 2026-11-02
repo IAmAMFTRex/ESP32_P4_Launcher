@@ -24,11 +24,13 @@ components/lx_audio/      audio engine: per-stream rings → resample → mix �
 components/lx_ui/         launcher-drawn screens for apps: content browser (pick_file) + message box
 components/lx_input/      input manager: USB HID gamepads/keyboards, XInput (Xbox 360) pads (lx_input_xinput) + board buttons (merged into P1) → players + event queue; HOME chord;
                           lx_hid_parse = HID descriptor parser; per-pad button mapping in NVS ("padmap")
-components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm
+components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm; online update (latest.json);
+                          lx_appstore = app catalogue for Settings → Apps (apps.json on the "apps" release)
 components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17)
 components/lx_web/        Wi-Fi file manager: web page for the SD card, on request, with a PIN per start
 papp-sdk/                 App SDK: include/papp/papp.h, runtime/ (crt0, libc glue), ld/papp.ld,
-                          tools/papp_build.py, tools/papp_pack.py
+                          tools/papp_build.py, tools/papp_pack.py. App version: apps/<app>/version.txt
+                          (beside the first source or the build.py) -> PAPP_APP_VERSION in the manifest
 apps/                     Test/demo apps (hello, libc_test, gfx_demo: DISP test, args w h mode secs bufs;
                           audio_test: AUDI test, args mix|cycles|block; input_test: INPT event log, arg secs;
                           thread_test: THRD test (--libc), args all|leave|exit|spin;
@@ -41,13 +43,18 @@ apps/<emu>/               Emulators, cores copied from RetroESP32_P4, each with 
                           `python apps/build_all.py [name ...]` builds every app with a build.py
 apps/common/odroid/       RetroESP32 odroid_* / app_common / FreeRTOS / ESP-IDF shims on the SDK, so the cores
                           and their *_run.c build unchanged; emu_main.c (browser → EMU_RUN; Exit game → PAPP_EXIT_RELAUNCH = back to the browser), emubuild.py;
-                          X = in-game menu, Y = volume, unless the core sets odroid_input_xy_menu_disable
-                          (SNES, Genesis, Neo Geo): then touch the left (menu) / right (volume) screen edge
+                          in-game menu = odroid_menu.h (odroid_emu_menu / odroid_emu_volume, drawn by the launcher like
+                          the HOME menu; NES has the same items in its own glue). X or the left screen edge = menu,
+                          Y or the right edge = volume (the launcher's master volume); SNES, Genesis, Neo Geo set
+                          odroid_input_xy_menu_disable (X/Y are game buttons): edges only
 apps/common/icons/        88x88 icons of the emulator apps (emubuild copies <app>.png)
 apps/common/v1compat/     v1 `app_services_t` host on the SDK + v1build.py: the RetroESP32 v1 PSRAM games
                           doom, opentyrian, quake, duke3d build with their own glue unchanged; frames go to the PPA without a copy (DISP v3 `present_ext`)
 tools/papp_dev.py         DevLink host tool
 tools/make_release.py     Release files for Settings → Update: launcher.bin + latest.json, prints the gh command
+tools/make_apps_release.py  Catalogue for Settings → Apps from build/apps: apps.json + .papp + icons; --publish uploads
+                          them to the "apps" pre-release (bump the app's version.txt first). --base + /sd/update/apps_url.txt
+                          = test from a local server
 tests/host/test_reloc.py  Host relocation equivalence test
 tests/board/smoke.py      Board regression: relocation test, test apps, crash record
 ```

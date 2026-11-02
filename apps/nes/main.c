@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-PAPP_MANIFEST(.id = "emu.nes", .name = "NES", .version = "0.1.0", .main_stack = 32768);
+PAPP_MANIFEST(.id = "emu.nes", .name = "NES", .version = PAPP_APP_VERSION, .main_stack = 32768);
 
 #define NES_W   256
 #define NES_H   224
@@ -146,10 +146,35 @@ void nb_av_shutdown(void)
 
 /* ── Bridge: input ─────────────────────────────────────────────────────── */
 
+/* Touch zones beside the picture, as in the other emulators: the left edge is
+ * MENU, the right edge VOLUME (-1 / 1, 0 none). Polled at most every 30 ms. */
+static int touch_zone(void)
+{
+    static int zone;
+    static long long polled;
+    long long now = papp_time_us();
+    if (now - polled < 30000) return zone;
+    polled = now;
+    zone = 0;
+    papp_touch_point_t p;
+    papp_disp_info_t info = { .width = 800 };
+    const papp_if_disp_t *d = papp_if_disp();
+    if (d && d->hdr.version >= 2 && d->touch_read(NULL, &p, 1) > 0 && papp_disp_info(&info)) {
+        if (p.x < 170 * info.width / 800) zone = -1;
+        else if (p.x > 630 * info.width / 800) zone = 1;
+    }
+    return zone;
+}
+
 unsigned int nb_buttons(int player)
 {
     papp_gamepad_t g;
-    if (!papp_input_gamepad(player, &g)) return 0;
+    unsigned int edge = 0;
+    if (player == 0) {
+        int z = touch_zone();
+        edge = z < 0 ? NB_MENU : z > 0 ? NB_VOLUME : 0;
+    }
+    if (!papp_input_gamepad(player, &g)) return edge;
     uint32_t b = g.buttons;
     unsigned int r = 0;
     if (b & PAPP_BTN_A)      r |= NB_A;
@@ -161,7 +186,8 @@ unsigned int nb_buttons(int player)
     if ((b & PAPP_BTN_LEFT)  || g.lx < -16000) r |= NB_LEFT;
     if ((b & PAPP_BTN_RIGHT) || g.lx > 16000)  r |= NB_RIGHT;
     if (b & PAPP_BTN_X)      r |= NB_MENU;
-    return r;
+    if (b & PAPP_BTN_Y)      r |= NB_VOLUME;
+    return r | edge;
 }
 
 /* ── Bridge: in-game menu ──────────────────────────────────────────────── */
@@ -174,27 +200,49 @@ static bool save_exists(void)
     return f != NULL;
 }
 
+/* Until nothing is pressed (at most 1 s), so a press doesn't reach the game or a dialog */
+static void wait_release(void)
+{
+    for (int t = 0; t < 100 && (nb_buttons(0) | nb_buttons(1)); t++) papp_delay_ms(10);
+}
+
+/* Same items and look as the other emulators' menu (odroid_emu_menu) */
 int nb_menu(const char *note)
 {
-    const char *items[6];
-    int ids[6], n = 0;
+    const char *items[7];
+    int ids[7], n = 0;
     bool saved = save_exists();
     items[n] = "Resume game";   ids[n++] = NB_M_RESUME;
     items[n] = "Save game";     ids[n++] = NB_M_SAVE;
     if (saved) { items[n] = "Load saved game"; ids[n++] = NB_M_LOAD; }
     items[n] = "Restart game";  ids[n++] = NB_M_RESTART;
     if (saved) { items[n] = "Delete save";     ids[n++] = NB_M_DELETE; }
+    int volume = n;
+    items[n] = "Volume";        ids[n++] = NB_M_RESUME;
     items[n] = "Exit game";     ids[n++] = NB_M_EXIT;
 
     char title[48];
     if (note) snprintf(title, sizeof(title), "Game menu - %s", note);
     else snprintf(title, sizeof(title), "Game menu");
+    wait_release();
     if (s_stream) papp_audio_pause(s_stream, true);
-    int k = papp_ui_menu(title, items, n, 0);
+    int k, at = 0;
+    while ((k = papp_ui_menu(title, items, n, at)) == volume) {
+        papp_ui_volume();
+        at = volume;
+    }
     if (s_stream) papp_audio_pause(s_stream, false);
-    /* don't let the button that closed the menu reach the game */
-    for (int t = 0; t < 50 && (nb_buttons(0) | nb_buttons(1)); t++) papp_delay_ms(10);
+    wait_release();
     return k < 0 ? NB_M_RESUME : ids[k];
+}
+
+void nb_volume(void)
+{
+    wait_release();
+    if (s_stream) papp_audio_pause(s_stream, true);
+    papp_ui_volume();
+    if (s_stream) papp_audio_pause(s_stream, false);
+    wait_release();
 }
 
 void nb_delete_save(void)

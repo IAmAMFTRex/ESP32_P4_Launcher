@@ -50,6 +50,7 @@ extern "C" {
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
 }
+#include "odroid_menu.h"
 
 /* ---------- Constants ---------- */
 static const char *TAG = "a800";
@@ -244,10 +245,8 @@ static int a800_font_index(char c)
     return 0;
 }
 
-#define A800_COLOR_BLACK   0x0000
 #define A800_COLOR_WHITE   0xFFFF
 #define A800_COLOR_YELLOW  0xE0FF
-#define A800_COLOR_DKGRAY  0x2108
 #define A800_COLOR_GREEN   0xE007
 #define A800_COLOR_CYAN    0xFF07
 
@@ -806,9 +805,9 @@ static void build_save_path(const char *rom_path)
     free(fileName);
 }
 
-static void SaveState(void)
+static bool SaveState(void)
 {
-    if (save_path[0] == '\0') return;
+    if (save_path[0] == '\0') return false;
 
     char dirBuf[256];
     snprintf(dirBuf, sizeof(dirBuf), "/sd/odroid");         mkdir(dirBuf, 0775);
@@ -819,7 +818,7 @@ static void SaveState(void)
         s_emu_state = (emulator_state_t *)heap_caps_calloc(1, sizeof(emulator_state_t), MALLOC_CAP_SPIRAM);
         if (!s_emu_state) {
             ESP_LOGW(TAG, "SaveState: out of memory for state buffer");
-            return;
+            return false;
         }
     }
 
@@ -830,15 +829,17 @@ static void SaveState(void)
     FILE *f = fopen(save_path, "wb");
     if (!f) {
         ESP_LOGW(TAG, "SaveState: cannot open %s", save_path);
-        return;
+        return false;
     }
     size_t written = fwrite(s_emu_state->state, 1, STATESAV_MAX_SIZE, f);
     fclose(f);
 
-    if (written == STATESAV_MAX_SIZE)
+    if (written == STATESAV_MAX_SIZE) {
         ESP_LOGI(TAG, "Saved state to %s (%u bytes)", save_path, (unsigned)written);
-    else
-        ESP_LOGW(TAG, "SaveState: short write %u/%u to %s", (unsigned)written, STATESAV_MAX_SIZE, save_path);
+        return true;
+    }
+    ESP_LOGW(TAG, "SaveState: short write %u/%u to %s", (unsigned)written, STATESAV_MAX_SIZE, save_path);
+    return false;
 }
 
 static bool LoadState(void)
@@ -892,256 +893,42 @@ static bool a800_delete_save(void)
     return false;
 }
 
-/* ─── Volume Overlay ──────────────────────────────────────────── */
-static void a800_show_volume_overlay(void)
+/* ─── In-Game Menu (drawn by the launcher) ────────────────────── */
+/* Waits until the video task has shown its last frame (it takes the frame off
+ * the queue only after presenting it): the launcher owns the display while a
+ * dialog is up, and the main loop is the only frame producer */
+static void a800_video_idle(void)
 {
-    uint16_t *fb = s_vid_rgb565;
-    if (!fb) return;
-
-    static const char *level_names[ODROID_VOLUME_LEVEL_COUNT] = {
-        "MUTE", "25%", "50%", "75%", "100%"
-    };
-
-    int level = (int)odroid_audio_volume_get();
-    int timeout = 25;
-
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-    for (int i = 0; i < 100; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_VOLUME]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    while (timeout > 0) {
-        int box_w = 140, box_h = 34;
-        int box_x = (DISPLAY_WIDTH - box_w) / 2, box_y = 8;
-
-        a800_fill_rect(fb, box_x, box_y, box_w, box_h, A800_COLOR_BLACK);
-        a800_fill_rect(fb, box_x, box_y, box_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x, box_y + box_h - 1, box_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x, box_y, 1, box_h, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x + box_w - 1, box_y, 1, box_h, A800_COLOR_WHITE);
-
-        char title[32];
-        snprintf(title, sizeof(title), "VOLUME: %s", level_names[level]);
-        int title_w = strlen(title) * 6;
-        a800_draw_string(fb, box_x + (box_w - title_w) / 2, box_y + 4, title, A800_COLOR_YELLOW);
-
-        int bar_x = box_x + 10, bar_y = box_y + 16, bar_w = box_w - 20, bar_h = 10;
-        a800_fill_rect(fb, bar_x, bar_y, bar_w, bar_h, A800_COLOR_DKGRAY);
-        if (level > 0) {
-            int fill_w = (bar_w * level) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            uint16_t bar_color = (level <= 1) ? A800_COLOR_GREEN :
-                                 (level <= 3) ? A800_COLOR_CYAN : A800_COLOR_YELLOW;
-            a800_fill_rect(fb, bar_x, bar_y, fill_w, bar_h, bar_color);
-        }
-        a800_fill_rect(fb, bar_x, bar_y, bar_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, bar_x, bar_y + bar_h - 1, bar_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, bar_x, bar_y, 1, bar_h, A800_COLOR_WHITE);
-        a800_fill_rect(fb, bar_x + bar_w - 1, bar_y, 1, bar_h, A800_COLOR_WHITE);
-        for (int i = 1; i < ODROID_VOLUME_LEVEL_COUNT - 1; i++) {
-            int sx = bar_x + (bar_w * i) / (ODROID_VOLUME_LEVEL_COUNT - 1);
-            a800_fill_rect(fb, sx, bar_y, 1, bar_h, A800_COLOR_WHITE);
-        }
-
-        ili9341_write_frame_rgb565_ex(fb, false);
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-        bool changed = false;
-
-        if (state.values[ODROID_INPUT_LEFT] && !prev.values[ODROID_INPUT_LEFT]) {
-            if (level > 0) { level--; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_RIGHT] && !prev.values[ODROID_INPUT_RIGHT]) {
-            if (level < ODROID_VOLUME_LEVEL_COUNT - 1) { level++; changed = true; }
-            timeout = 25;
-        }
-        if (state.values[ODROID_INPUT_VOLUME] && !prev.values[ODROID_INPUT_VOLUME]) {
-            level = (level + 1) % ODROID_VOLUME_LEVEL_COUNT;
-            changed = true;
-            timeout = 25;
-        }
-        if ((state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) ||
-            (state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B]))
-            timeout = 0;
-        if (changed) {
-            odroid_audio_volume_set(level);
-            odroid_settings_Volume_set(level);
-        }
-        prev = state;
-        timeout--;
-    }
+    for (int t = 0; t < 100 && uxQueueMessagesWaiting(vidQueue); t++)
+        vTaskDelay(pdMS_TO_TICKS(5));
 }
 
-/* ─── In-Game Menu ─────────────────────────────────────────────── */
-#define A800_MENU_RESUME     0
-#define A800_MENU_RESTART    1
-#define A800_MENU_SAVE       2
-#define A800_MENU_RELOAD     3
-#define A800_MENU_OVERWRITE  4
-#define A800_MENU_DELETE     5
-#define A800_MENU_EXIT       6
-
+/* Returns false when Exit was chosen */
 static bool a800_show_ingame_menu(void)
 {
-    uint16_t *fb = s_vid_rgb565;
-    if (!fb) return true;
-
-    bool has_save = a800_check_save_exists();
-
-    const char *labels[8];
-    int ids[8];
-    int count = 0;
-
-    labels[count] = "Resume Game";      ids[count] = A800_MENU_RESUME;    count++;
-    labels[count] = "Restart Game";     ids[count] = A800_MENU_RESTART;   count++;
-    labels[count] = "Save Game";        ids[count] = A800_MENU_SAVE;      count++;
-    if (has_save) {
-        labels[count] = "Reload Game";  ids[count] = A800_MENU_RELOAD;    count++;
-        labels[count] = "Overwrite Save"; ids[count] = A800_MENU_OVERWRITE; count++;
-        labels[count] = "Delete Save";  ids[count] = A800_MENU_DELETE;    count++;
+    a800_video_idle();
+    const char *note = NULL;
+    for (;;) {
+        switch (odroid_emu_menu(note, a800_check_save_exists() ? EMU_MENU_HAS_SAVE : 0)) {
+        case EMU_MENU_SAVE:
+            note = SaveState() ? "saved" : "save failed";
+            continue;
+        case EMU_MENU_DELETE:
+            note = a800_delete_save() ? "save deleted" : "delete failed";
+            continue;
+        case EMU_MENU_LOAD:
+            LoadState();
+            return true;
+        case EMU_MENU_RESTART:
+            /* Reinitialize via the core's cold start */
+            Atari800_Coldstart();
+            return true;
+        case EMU_MENU_EXIT:
+            return false;
+        default:
+            return true;
+        }
     }
-    labels[count] = "Exit Game";        ids[count] = A800_MENU_EXIT;      count++;
-
-    int selected = 0;
-    odroid_gamepad_state prev;
-    odroid_input_gamepad_read(&prev);
-
-    for (int i = 0; i < 200; i++) {
-        odroid_gamepad_state tmp;
-        odroid_input_gamepad_read(&tmp);
-        if (!tmp.values[ODROID_INPUT_MENU]) break;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    odroid_input_gamepad_read(&prev);
-
-    bool keep_running = true;
-    bool menu_active = true;
-    const char *flash_msg = NULL;
-    int flash_timer = 0;
-
-    while (menu_active) {
-        int box_w = 160;
-        int box_h = 20 + count * 14 + 10;
-        int box_x = (DISPLAY_WIDTH - box_w) / 2;
-        int box_y = (DISPLAY_HEIGHT - box_h) / 2;
-
-        a800_fill_rect(fb, box_x, box_y, box_w, box_h, A800_COLOR_BLACK);
-        a800_fill_rect(fb, box_x, box_y, box_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x, box_y + box_h - 1, box_w, 1, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x, box_y, 1, box_h, A800_COLOR_WHITE);
-        a800_fill_rect(fb, box_x + box_w - 1, box_y, 1, box_h, A800_COLOR_WHITE);
-
-        a800_draw_string(fb, box_x + (box_w - 9*6)/2, box_y + 5, "GAME MENU", A800_COLOR_YELLOW);
-
-        for (int i = 0; i < count; i++) {
-            int oy = box_y + 18 + i * 14;
-            int ox = box_x + 16;
-            uint16_t color = (i == selected) ? A800_COLOR_YELLOW : A800_COLOR_WHITE;
-            a800_fill_rect(fb, box_x + 2, oy - 1, box_w - 4, 10, A800_COLOR_BLACK);
-            if (i == selected)
-                a800_draw_char(fb, box_x + 6, oy, '>', A800_COLOR_YELLOW);
-            a800_draw_string(fb, ox, oy, labels[i], color);
-        }
-
-        if (flash_msg && flash_timer > 0) {
-            int fw = strlen(flash_msg) * 6;
-            int fx = box_x + (box_w - fw) / 2;
-            int fy = box_y + box_h - 12;
-            a800_fill_rect(fb, box_x + 2, fy - 2, box_w - 4, 12, A800_COLOR_BLACK);
-            a800_draw_string(fb, fx, fy, flash_msg, A800_COLOR_GREEN);
-            flash_timer--;
-            if (flash_timer == 0) flash_msg = NULL;
-        }
-
-        ili9341_write_frame_rgb565_ex(fb, false);
-
-        vTaskDelay(pdMS_TO_TICKS(80));
-        odroid_gamepad_state state;
-        odroid_input_gamepad_read(&state);
-
-        if (state.values[ODROID_INPUT_UP] && !prev.values[ODROID_INPUT_UP])
-            selected = (selected - 1 + count) % count;
-        if (state.values[ODROID_INPUT_DOWN] && !prev.values[ODROID_INPUT_DOWN])
-            selected = (selected + 1) % count;
-
-        if ((state.values[ODROID_INPUT_B] && !prev.values[ODROID_INPUT_B]) ||
-            (state.values[ODROID_INPUT_MENU] && !prev.values[ODROID_INPUT_MENU])) {
-            menu_active = false;
-            keep_running = true;
-        }
-
-        if (state.values[ODROID_INPUT_A] && !prev.values[ODROID_INPUT_A]) {
-            switch (ids[selected]) {
-                case A800_MENU_RESUME:
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-                case A800_MENU_RESTART:
-                    /* Reinitialize via the core's cold start */
-                    Atari800_Coldstart();
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-                case A800_MENU_RELOAD:
-                    LoadState();
-                    flash_msg = "Loaded!";
-                    flash_timer = 15;
-                    menu_active = false;
-                    keep_running = true;
-                    break;
-                case A800_MENU_SAVE:
-                    SaveState();
-                    if (!has_save) {
-                        has_save = true;
-                        count = 0;
-                        labels[count] = "Resume Game";      ids[count] = A800_MENU_RESUME;    count++;
-                        labels[count] = "Restart Game";     ids[count] = A800_MENU_RESTART;   count++;
-                        labels[count] = "Save Game";        ids[count] = A800_MENU_SAVE;      count++;
-                        labels[count] = "Reload Game";      ids[count] = A800_MENU_RELOAD;    count++;
-                        labels[count] = "Overwrite Save";   ids[count] = A800_MENU_OVERWRITE; count++;
-                        labels[count] = "Delete Save";      ids[count] = A800_MENU_DELETE;    count++;
-                        labels[count] = "Exit Game";        ids[count] = A800_MENU_EXIT;      count++;
-                    }
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-                case A800_MENU_OVERWRITE:
-                    SaveState();
-                    flash_msg = "Saved!";
-                    flash_timer = 15;
-                    break;
-                case A800_MENU_DELETE:
-                    if (a800_delete_save()) {
-                        has_save = false;
-                        flash_msg = "Deleted!";
-                        flash_timer = 15;
-                        count = 0;
-                        labels[count] = "Resume Game";      ids[count] = A800_MENU_RESUME;    count++;
-                        labels[count] = "Restart Game";     ids[count] = A800_MENU_RESTART;   count++;
-                        labels[count] = "Save Game";        ids[count] = A800_MENU_SAVE;      count++;
-                        labels[count] = "Exit Game";        ids[count] = A800_MENU_EXIT;      count++;
-                        if (selected >= count) selected = count - 1;
-                    } else {
-                        flash_msg = "Error!";
-                        flash_timer = 15;
-                    }
-                    break;
-                case A800_MENU_EXIT:
-                    menu_active = false;
-                    keep_running = false;
-                    break;
-            }
-        }
-        prev = state;
-    }
-    return keep_running;
 }
 
 /* ─── Main entry point ────────────────────────────────────────── */
@@ -1237,10 +1024,6 @@ extern "C" void atari800_run(const char *rom_path)
             /* MENU button → in-game menu */
             if (!ignoreMenuButton && previousState.values[ODROID_INPUT_MENU] &&
                 !joystick.values[ODROID_INPUT_MENU]) {
-                uint8_t *dummy;
-                while (xQueueReceive(vidQueue, &dummy, 0) == pdTRUE) {}
-                vTaskDelay(pdMS_TO_TICKS(50));
-
                 if (!a800_show_ingame_menu()) {
                     /* Exit selected */
                     SaveState();
@@ -1253,7 +1036,8 @@ extern "C" void atari800_run(const char *rom_path)
             /* VOLUME button */
             if (previousState.values[ODROID_INPUT_VOLUME] &&
                 !joystick.values[ODROID_INPUT_VOLUME]) {
-                a800_show_volume_overlay();
+                a800_video_idle();
+                odroid_emu_volume();
                 odroid_input_gamepad_read(&joystick);
             }
 

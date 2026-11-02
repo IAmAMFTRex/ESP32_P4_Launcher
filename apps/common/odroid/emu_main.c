@@ -39,7 +39,7 @@
 #define EMU_EXCLUDE_F 0
 #endif
 
-PAPP_MANIFEST(.id = EMU_ID, .name = EMU_NAME, .version = "0.1.0", .main_stack = EMU_STACK);
+PAPP_MANIFEST(.id = EMU_ID, .name = EMU_NAME, .version = PAPP_APP_VERSION, .main_stack = EMU_STACK);
 
 void EMU_RUN(const char *rom);
 void odroid_papp_set_rom(const char *path, jmp_buf *exit_jb);

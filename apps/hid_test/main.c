@@ -7,7 +7,7 @@
 #include "papp/papp.h"
 #include "lx_hid_parse.h"
 
-PAPP_MANIFEST(.id = "test.hid", .name = "HID test", .version = "1.0.0", .main_stack = 16384,
+PAPP_MANIFEST(.id = "test.hid", .name = "HID test", .version = PAPP_APP_VERSION, .main_stack = 16384,
               .flags = PAPP_MF_HIDDEN);
 
 static int s_fail;

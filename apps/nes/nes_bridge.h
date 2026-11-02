@@ -12,7 +12,8 @@
 #define NB_DOWN    0x20
 #define NB_LEFT    0x40
 #define NB_RIGHT   0x80
-#define NB_MENU    0x100      /* X: in-game menu */
+#define NB_MENU    0x100      /* X or the left screen edge: in-game menu */
+#define NB_VOLUME  0x200      /* Y or the right screen edge: volume */
 
 /* In-game menu choices (nb_menu) */
 enum { NB_M_RESUME, NB_M_SAVE, NB_M_LOAD, NB_M_RESTART, NB_M_DELETE, NB_M_EXIT };
@@ -33,6 +34,7 @@ unsigned int nb_buttons(int player);                        /* NB_* held by play
 /* Pauses audio, shows the menu over the game, waits for the buttons to be
  * released; note (or NULL) goes in the title. Returns NB_M_*. */
 int          nb_menu(const char *note);
+void         nb_volume(void);                               /* the launcher's volume dialog */
 void         nb_delete_save(void);
 
 /* ROM image loaded by main.c */

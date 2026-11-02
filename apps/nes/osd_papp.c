@@ -129,7 +129,7 @@ static void quit(void)
    nofrendo_quit_flag = true;
 }
 
-/* X: the in-game menu (RetroESP32's MENU button), drawn by the launcher */
+/* X or the left edge: the in-game menu (RetroESP32's MENU button), drawn by the launcher */
 static void game_menu(void)
 {
    const char *note = NULL;
@@ -188,9 +188,12 @@ void osd_getinput(void)
    {
       unsigned int now = nb_buttons(p), chg = now ^ old[p];
       old[p] = now;
-      if (chg & now & NB_MENU)
+      if (chg & now & (NB_MENU | NB_VOLUME))
       {
-         game_menu();
+         if (now & NB_MENU)
+            game_menu();
+         else
+            nb_volume();
          old[0] = nb_buttons(0);
          old[1] = nb_buttons(1);
          return;
