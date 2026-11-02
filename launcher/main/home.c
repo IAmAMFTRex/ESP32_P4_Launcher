@@ -88,7 +88,7 @@ typedef struct {
     bool is_folder;
 } app_entry_t;
 
-static app_entry_t s_apps[MAX_APPS];
+static app_entry_t *s_apps;     /* MAX_APPS, in PSRAM: internal RAM is short at boot (7" board) */
 static int s_napps;             /* entries in s_apps */
 static int s_ninstalled;        /* of them, apps */
 static char s_folder[MAX_NAME + 8];     /* folder on screen, "" = main page */
@@ -250,6 +250,8 @@ static void scan_apps(void)
 {
     s_napps = s_ninstalled = 0;
     s_files_app[0] = 0;
+    if (!s_apps) s_apps = heap_caps_calloc(MAX_APPS, sizeof(app_entry_t), MALLOC_CAP_SPIRAM);
+    if (!s_apps) return;
     scan_dir(APPS_DIR, "");
     bool here = false;
     for (int i = 0; i < s_napps; i++) here |= s_apps[i].is_folder && strcmp(s_apps[i].name, s_folder) == 0;
@@ -1235,7 +1237,8 @@ enum { ACT_CLOSE, ACT_OPEN, ACT_RENAME, ACT_DELETE, ACT_DELETE_YES, ACT_PICK, AC
  * Installs run one at a time from a queue, in the background. */
 
 static lv_obj_t *s_store_btn, *s_store_scr, *s_store_back, *s_store_all, *s_store_status, *s_store_list;
-static struct { char path[160]; char version[16]; } s_store_inst[LX_APPSTORE_MAX];
+typedef struct { char path[160]; char version[16]; } store_inst_t;
+static store_inst_t *s_store_inst;      /* LX_APPSTORE_MAX, in PSRAM; set before any store row is built */
 static int s_store_queue[LX_APPSTORE_MAX], s_store_nqueue;
 static int s_store_doing = -1;          /* being installed */
 static int s_store_sel;                 /* the app the menu is about */
@@ -1269,7 +1272,9 @@ static void store_find_in(const char *dir)
 /* Apps are in /sd/apps/<dir> or /sd/apps/<folder>/<dir> */
 static void store_find_installed(void)
 {
-    memset(s_store_inst, 0, sizeof(s_store_inst));
+    if (!s_store_inst) s_store_inst = heap_caps_malloc(LX_APPSTORE_MAX * sizeof(store_inst_t), MALLOC_CAP_SPIRAM);
+    if (!s_store_inst) abort();
+    memset(s_store_inst, 0, LX_APPSTORE_MAX * sizeof(store_inst_t));
     DIR *d = opendir(APPS_DIR);
     if (!d) return;
     struct dirent *de;
@@ -1309,6 +1314,7 @@ static void on_store_pick(lv_event_t *ev);
 /* Rebuilds the rows, keeping the focus on the same row or button */
 static void store_rows(void)
 {
+    if (!s_store_inst) store_find_installed();
     bool here = lv_screen_active() == s_store_scr && !s_menu;
     int row = -1;
     lv_obj_t *button = NULL;
