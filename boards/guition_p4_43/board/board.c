@@ -105,10 +105,13 @@ esp_err_t bsp_sdcard_mount(const char *mount_point)
 
         /* Power-cycle the card through the LDO before retrying */
         sd_pwr_ctrl_del_on_chip_ldo(pwr);
+        pwr = NULL;
+        if (attempt == 3) break;
         vTaskDelay(pdMS_TO_TICKS(500));
         if (sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg, &pwr) != ESP_OK) break;
         vTaskDelay(pdMS_TO_TICKS(200));
     }
+    if (pwr) sd_pwr_ctrl_del_on_chip_ldo(pwr);     /* free for a later try */
     return err;
 }
 

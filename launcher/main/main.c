@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -64,6 +65,20 @@ static void on_system_input(lx_input_sys_t ev)
     }
 }
 
+/* No card at boot: keep trying, so a card inserted later is picked up (and the
+ * reason it fails ends up in the DevLink log) */
+static void sd_retry_task(void *arg)
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        esp_err_t err = bsp_sdcard_mount("/sd");
+        if (err == ESP_OK) break;
+        ESP_LOGW(TAG, "SD card still not mounted: %s", esp_err_to_name(err));
+    }
+    ESP_LOGI(TAG, "SD card mounted");
+    vTaskDelete(NULL);
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -75,6 +90,18 @@ void app_main(void)
     ESP_ERROR_CHECK(bsp_init());
     ESP_LOGI(TAG, "board: %s", bsp_info()->name);
 
+    /* The clock before anything shows it: from the board's RTC when it has one */
+    int64_t utc;
+    if (bsp_rtc_init() == ESP_OK) {
+        if (bsp_rtc_get(&utc) == ESP_OK) {
+            struct timeval tv = { .tv_sec = (time_t)utc };
+            settimeofday(&tv, NULL);
+            ESP_LOGI(TAG, "time from the RTC");
+        } else {
+            ESP_LOGW(TAG, "the RTC has no valid time: waiting for NTP or DevLink");
+        }
+    }
+
     if (bsp_display_init() != ESP_OK || lx_comp_init() != ESP_OK)
         ESP_LOGE(TAG, "display init failed — continuing headless");
 
@@ -83,8 +110,10 @@ void app_main(void)
     if (bsp_audio_init() != ESP_OK)
         ESP_LOGW(TAG, "no audio");
 
-    if (bsp_sdcard_mount("/sd") != ESP_OK)
+    if (bsp_sdcard_mount("/sd") != ESP_OK) {
         ESP_LOGE(TAG, "no SD card — DevLink file commands will fail");
+        xTaskCreate(sd_retry_task, "sd_retry", 4096, NULL, 2, NULL);
+    }
 
     ESP_ERROR_CHECK(lx_app_init(lx_devlink_app_log, on_app_exit));
     if (lx_input_init(on_system_input) != ESP_OK)

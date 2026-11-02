@@ -3,7 +3,10 @@
  * launcher.bin to the SD card and checks its SHA-256. Installing is then the same
  * as an update from the card, with the same rollback.
  *
- * latest.json: {"version":"0.19.0","url":"https://...","size":1347392,"sha256":"<hex>"}
+ * latest.json: {"version":"0.19.0","url":"https://...","size":1347392,"sha256":"<hex>",
+ *               "boards":{"<board id>":{"url":...,"size":...,"sha256":...}, ...}}
+ * Each board takes its own entry. The top-level fields are the first board's
+ * (guition_p4_43), where launchers from before per-board releases look.
  *
  * A /sd/update/ota_url.txt holding one URL replaces the release address, to test
  * against another server.
@@ -15,6 +18,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include "bsp.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
@@ -124,10 +128,18 @@ static void check_task(void *arg)
     }
     cJSON *j = status == 200 ? cJSON_Parse(body) : NULL;
     free(body);
-    cJSON *v = cJSON_GetObjectItem(j, "version"), *u = cJSON_GetObjectItem(j, "url");
-    cJSON *s = cJSON_GetObjectItem(j, "size"), *h = cJSON_GetObjectItem(j, "sha256");
+    /* This board's entry; the top level only stands for the first board */
+    const char *id = bsp_info()->id;
+    cJSON *boards = cJSON_GetObjectItem(j, "boards"), *mine = cJSON_GetObjectItem(boards, id);
+    bool legacy_ok = !boards && strcmp(id, "guition_p4_43") == 0;
+    cJSON *e = mine ? mine : legacy_ok ? j : NULL;
+    cJSON *v = cJSON_GetObjectItem(e, "version"), *u = cJSON_GetObjectItem(e, "url");
+    cJSON *s = cJSON_GetObjectItem(e, "size"), *h = cJSON_GetObjectItem(e, "sha256");
+    if (!v) v = cJSON_GetObjectItem(j, "version");
     if (status == 404) {
         fail("No release has been published yet.");
+    } else if (j && !e) {
+        fail("No release for this board yet.");
     } else if (status < 0) {
         char text[sizeof(s_error)];
         snprintf(text, sizeof(text), "Could not reach the update server (%s).", s_why);

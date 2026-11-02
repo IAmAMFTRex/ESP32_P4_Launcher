@@ -51,7 +51,7 @@ RUN, STOP, STATUS = 0x30, 0x31, 0x32
 REBOOT, CRASH, CRASH_CLEAR = 0x40, 0x41, 0x42
 NET = 0x52
 SHOT, INPUT = 0x50, 0x51
-INPUT_PAD, INPUT_KEY, INPUT_STATE = 1, 2, 3
+INPUT_PAD, INPUT_KEY, INPUT_STATE, INPUT_UNMAP = 1, 2, 3, 4
 
 # PAPP_BTN_* bit positions (papp_abi.h)
 BUTTONS = {"A": 0, "B": 1, "X": 2, "Y": 3, "L1": 4, "R1": 5, "L2": 6, "R2": 7, "SELECT": 8,
@@ -463,6 +463,7 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="DevLink host tool")
     ap.add_argument("--port")
+    ap.add_argument("--no-time", action="store_true", help="don't set the board's clock from this PC")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
     p = sub.add_parser("net", help="network self-test on the board"); p.add_argument("--quick", action="store_true", help="link and gateway ping only"); p.add_argument("--scan", action="store_true", help="also list networks")
@@ -483,7 +484,7 @@ def main():
     p = sub.add_parser("shot"); p.add_argument("out", nargs="?", default="screenshot.png")
     p = sub.add_parser("log"); p.add_argument("--seconds", type=float, default=0)
     p = sub.add_parser("input", help="inject input or read the input state")
-    p.add_argument("what", choices=["state", "pad", "key", "text"])
+    p.add_argument("what", choices=["state", "pad", "key", "text", "unmap"])
     p.add_argument("value", nargs="?", help="pad: A+START ...; key: ENTER, a, 0x28; text: string")
     p.add_argument("--player", type=int, default=0)
     p.add_argument("--hold", type=int, default=100, help="ms")
@@ -504,7 +505,8 @@ def main():
     try:
         # The board may have no clock source: give it ours (local wall-clock time)
         now = time.time()
-        dl.request(TIME, struct.pack("<qq", int(now + time.localtime(now).tm_gmtoff), int(now)), timeout=2.0)
+        if not args.no_time:
+            dl.request(TIME, struct.pack("<qq", int(now + time.localtime(now).tm_gmtoff), int(now)), timeout=2.0)
     except DevLinkError:
         pass                    # older launcher
 
@@ -576,6 +578,9 @@ def main():
                     if time.time() >= end:
                         break
                     time.sleep(0.05)
+            elif args.what == "unmap":                  # forget the pad's saved button mapping
+                dl.request(INPUT, bytes([INPUT_UNMAP, args.player]))
+                print(f"player {args.player + 1}: default buttons")
             else:
                 send_input(dl, args.what, args.value, args.player, args.hold)
         elif c == "reboot":

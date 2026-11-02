@@ -7,7 +7,7 @@
 
 ---
 
-## Status (2026-11-02, launcher 0.20.0: in-game menu; 0.19: online update, Wi-Fi file manager, screenshots, idle dimming; 0.18: folders)
+## Status (2026-11-02, launcher 0.21.0: second board, Guition 7"; 0.20.1: XInput pads; 0.20: in-game menu; 0.19: online update, Wi-Fi file manager, screenshots, idle dimming; 0.18: folders)
 
 | Item | State | Evidence |
 |---|---|---|
@@ -66,7 +66,7 @@ New services follow the existing rules: interfaces are appended and versioned, a
 |---|---|---|---|
 | A1 | HID report descriptor parser: **done, 0.14** | — | `lx_hid_parse.c`, tested by `apps/hid_test` (0 failures). Non-Sony pads with a usable descriptor use it; known pads keep their parsers. **No real non-Sony pad tested yet** |
 | A2 | Button mapping screen: **done, 0.14** | — | Settings → Map controller, saved per VID:PID in NVS. Tested end to end with injected presses, including an A/B swap reaching an app. Skipped buttons keep their default; touch Reset clears it |
-| A3 | XInput support | M | Not started: needs a USB vendor-class driver, and an Xbox-style pad to test against |
+| A3 | XInput support: **done, 0.20.1** | — | `lx_input_xinput.c`: a second USB host client claims the Xbox 360 vendor interface (FF/5D/01), sends the vendor start request and the player LED command (8BitDo stays silent without the LED), and reads the 20-byte report. Tested with the 8BitDo Ultimate 2C receiver (2DC8:310A): face buttons and d-pad confirmed; sticks, triggers, shoulders and Start/Home follow the standard layout but were not seen pressed. Xbox One pads (GIP) are not supported |
 | A4 | Pad hot-plug and player assignment: **code done, 0.14** | — | A pad returns to its own slot by VID:PID. Needs a physical replug test |
 | A5 | Diagnose the USB HID task abort | S | Not reproduced, no data yet. The next occurrence leaves a core dump for `papp_dev.py crash` |
 | A6 | Battery level: **done, 0.15** | — | `bsp_battery_mv` (GPIO 53, divider and curve from the reference), `BSP_CAP_BATTERY`, system bar. Pin reads 3.92 V. Hidden outside 2.8-4.5 V. Not yet exposed to apps. Calibration against a measured cell is open |
@@ -94,7 +94,7 @@ the clock is lost at power-off, so check whether the board has an RTC.
 | C0 | **Spike: radio bring-up: done 2026-11-01** | — | See results below |
 | C0b | Match host and C6 firmware: **done** | — | `esp_hosted` pinned to ~2.0 (2.0.17, same as the C6): mismatch gone. The C6 reports BLE, so C4 needs no C6 update |
 | C1 | Wi-Fi service + Settings: **done, 0.16, fixed 0.19** | — | `components/lx_net`. Joining and rejoining a saved network work on the board. A saved network now keeps retrying, a scan works during a join, and DNS has 1.1.1.1 as backup. `NETGEAR98` is -81 dBm here, and joins took 9 to over 90 s |
-| C2 | NTP + time zone: **code done, 0.16** | — | Zone picker in the Wi-Fi screen. NTP is **unconfirmed**: the board has not reached the internet, and DevLink also sets the clock |
+| C2 | NTP + time zone: **done, 0.16, confirmed 2026-11-02** | — | Zone picker in the Wi-Fi screen. NTP sets the clock once Wi-Fi connects (confirmed on the board by hand). DevLink also sets the clock from the PC |
 | C3 | NET interface for apps | M–L | Optional sockets for PAPPs, tracked for teardown. Only when an app needs it |
 | C4 | BLE HID controllers | L | NimBLE on the P4 through the C6, pairing screen, feeds `lx_input` as another pad source. Reuses A1 and A2, so it comes after them |
 | C5 | Radio during games: **interim, 0.16** | S | Stopped while an app runs and resumed after (tested with the radio up, not connected). Measure the real cost before changing this |
@@ -138,7 +138,7 @@ the clock is lost at power-off, so check whether the board has an RTC.
 
 ### Suggested order
 
-1. **Now:** finish hands-on testing, then join a stronger Wi-Fi network to test D3, C2 and the file manager.
+1. **Now:** finish hands-on testing. D3, C2 and the file manager are confirmed on the board.
 2. **Input:** try real pads against A1 and A4, then A3.
 3. **Everyday features:** B3, finish B2, overlay.
 4. **Radio:** D4, D5, C4.
@@ -403,6 +403,14 @@ Save states map to the overlay's app menu items and `/sd/data/<id>/saves/`.
 ---
 
 ## Phase 8 — Second board port (2–3 pw)
+
+**Status 2026-11-02 (0.21.0): first port done.** `boards/guition_p4_7` (Guition JC1060P470C, 7" 1024x600
+JD9165 landscape, GT911, ES8311 + NS4150). The same SD card runs unchanged: NES, Doom, Quake, Clock,
+the in-game menu and `smoke.py` all pass. Launcher fixes it needed: home, Settings, Wi-Fi and Map
+screens follow the screen size; esp_hosted pinned per board (the C6 firmware differs); the image's
+project name carries the board, so updates (SD and online) never cross boards; `latest.json` has a
+per-board section. `docs/PORTING_GUIDE.md` written. The 7" board's RX8025T RTC keeps the time across power-off (`bsp_rtc_*`, set from NTP); on boards with an RTC, the home screen clock opens a date and time setup (time zone, fields, sync from internet). Not done: the conformance app,
+the V2 panel table, and touch and sound checked by hand.
 
 Pick a board that is **meaningfully different** from the reference to stress the abstraction — e.g.
 a 7″ 1024×600 landscape P4 board (Espressif ESP32-P4-Function-EV-Board or a Waveshare ESP32-P4

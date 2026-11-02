@@ -179,7 +179,8 @@ int lx_input_pad_attach(const char *name, uint16_t vid, uint16_t pid)
         push_event(PAPP_EV_DEVICE_ADDED, player, 0, 0);
     }
     UNLOCK();
-    if (player >= 0) ESP_LOGI(TAG, "player %d: %s (%04X:%04X)", player + 1, name, vid, pid);
+    if (player >= 0) ESP_LOGI(TAG, "player %d: %s (%04X:%04X)%s", player + 1, name, vid, pid,
+                              has_map ? ", saved button mapping" : "");
     return player;
 }
 

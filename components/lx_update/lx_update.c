@@ -46,23 +46,30 @@ bool lx_update_rolled_back(void)
     return s_rolled_back;
 }
 
-bool lx_update_available(char *version, size_t len)
+/* A launcher image for this chip and this board: the project name carries the board */
+static bool image_ok(esp_app_desc_t *desc)
 {
     FILE *f = fopen(LX_UPDATE_FILE, "rb");
     if (!f) return false;
     esp_image_header_t img;
     esp_image_segment_header_t seg;
-    esp_app_desc_t desc;
     bool ok = fread(&img, 1, sizeof(img), f) == sizeof(img) &&
               fread(&seg, 1, sizeof(seg), f) == sizeof(seg) &&
-              fread(&desc, 1, sizeof(desc), f) == sizeof(desc);
+              fread(desc, 1, sizeof(*desc), f) == sizeof(*desc);
     fclose(f);
     if (!ok || img.magic != ESP_IMAGE_HEADER_MAGIC || img.chip_id != CONFIG_IDF_FIRMWARE_CHIP_ID ||
-        desc.magic_word != ESP_APP_DESC_MAGIC_WORD ||
-        strcmp(desc.project_name, esp_app_get_description()->project_name) != 0) {
-        ESP_LOGW(TAG, "%s is not a launcher image for this chip", LX_UPDATE_FILE);
+        desc->magic_word != ESP_APP_DESC_MAGIC_WORD ||
+        strcmp(desc->project_name, esp_app_get_description()->project_name) != 0) {
+        ESP_LOGW(TAG, "%s is not a launcher image for this chip and board", LX_UPDATE_FILE);
         return false;
     }
+    return true;
+}
+
+bool lx_update_available(char *version, size_t len)
+{
+    esp_app_desc_t desc;
+    if (!image_ok(&desc)) return false;
     if (strncmp(desc.version, esp_app_get_description()->version, sizeof(desc.version)) == 0)
         return false;
     snprintf(version, len, "%s", desc.version);
@@ -72,7 +79,9 @@ bool lx_update_available(char *version, size_t len)
 esp_err_t lx_update_install(void (*progress)(int percent))
 {
     struct stat st;
+    esp_app_desc_t desc;
     if (stat(LX_UPDATE_FILE, &st) != 0) return ESP_ERR_NOT_FOUND;
+    if (!image_ok(&desc)) return ESP_ERR_INVALID_VERSION;          /* another board's image */
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part || (size_t)st.st_size > part->size) return ESP_ERR_INVALID_SIZE;
     FILE *f = fopen(LX_UPDATE_FILE, "rb");

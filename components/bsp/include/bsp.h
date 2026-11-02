@@ -25,6 +25,7 @@ extern "C" {
 #define BSP_CAP_PADDLE    (1u << 5)
 #define BSP_CAP_USB_HOST  (1u << 6)
 #define BSP_CAP_BATTERY   (1u << 7)
+#define BSP_CAP_RTC       (1u << 8)
 
 typedef struct {
     const char *id;            /* "guition_p4_43"                       */
@@ -115,6 +116,14 @@ void      bsp_audio_volume(int percent);          /* 0 = mute                   
 esp_err_t bsp_buttons_init(void);
 uint32_t  bsp_buttons_read(void);                 /* BSP_BTN_* currently down     */
 int       bsp_analog_read(int ch);                /* 0..65535 (calibrated), -1 if absent */
+
+/* ── Real-time clock ───────────────────────────────────────────────────────
+ * Keeps UTC (seconds since 1970) across power-off. bsp_rtc_init sets BSP_CAP_RTC
+ * when a clock answers; get returns ESP_ERR_INVALID_STATE when it lost the time
+ * (battery out) or was never set. Boards without one return ESP_ERR_NOT_SUPPORTED. */
+esp_err_t bsp_rtc_init(void);
+esp_err_t bsp_rtc_get(int64_t *utc);
+esp_err_t bsp_rtc_set(int64_t utc);
 
 /* Battery voltage in mV at its divider, -1 if the board can't measure it. Without a
  * cell fitted the value is meaningless: callers check it is in the range of a Li-ion. */

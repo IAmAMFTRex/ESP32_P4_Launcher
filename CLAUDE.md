@@ -10,7 +10,8 @@ Design: `docs/ARCHITECTURE.md`. Plan + status: `docs/WORKPLAN.md`.
 
 ```
 launcher/                 ESP-IDF project (factory app; main.c + home.c = LVGL home screen + app folders). Board: -DLX_BOARD=<id> (default guition_p4_43)
-boards/<id>/board/        BSP implementation (component "board"); boards/<id>/sdkconfig.board
+boards/<id>/board/        BSP implementation (component "board", pins esp_hosted for its C6); boards/<id>/sdkconfig.board.
+                          guition_p4_43 (4.3" 480x800, image "launcher"), guition_p4_7 (7" 1024x600, image "launcher_guition_p4_7")
 components/bsp/           BSP contract (bsp.h) — the core only talks to hardware through it
 components/papp_abi/      papp_abi.h — .papp v2 format + interfaces (shared with apps; no IDF includes)
 components/lx_loader/     App Manager: loader, relocation, imports, services (SYS/MEM/FS/DISP/AUDI/INPT/THRD/UI), teardown
@@ -20,7 +21,7 @@ components/lx_gfx/        software drawing + 8x16 font for launcher screens (rot
 components/lx_comp/       compositor: app surfaces → PPA scale/rotate → panel; launcher screens draw via it
 components/lx_audio/      audio engine: per-stream rings → resample → mix → BSP codec (fixed rate)
 components/lx_ui/         launcher-drawn screens for apps: content browser (pick_file) + message box
-components/lx_input/      input manager: USB HID gamepads/keyboards + board buttons (merged into P1) → players + event queue; HOME chord;
+components/lx_input/      input manager: USB HID gamepads/keyboards, XInput (Xbox 360) pads (lx_input_xinput) + board buttons (merged into P1) → players + event queue; HOME chord;
                           lx_hid_parse = HID descriptor parser; per-pad button mapping in NVS ("padmap")
 components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm
 components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17)
@@ -54,8 +55,10 @@ tests/board/smoke.py      Board regression: relocation test, test apps, crash re
 
 - ESP-IDF v5.5.2 at `C:\Users\97254\esp\v5.5.2\esp-idf`; in PowerShell: `. .\tools\idf_env.ps1`
 - Python with pyserial + pyelftools: `C:\Users\97254\.espressif\python_env\idf5.5_py3.12_env\Scripts\python.exe`
-- Board: Guition ESP32-P4 4.3", chip rev v1.x (needs `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`),
-  USB-Serial-JTAG on **COM9**. UART0 is the text console; USB-Serial-JTAG belongs to DevLink.
+- Boards (both chip rev v1.x, `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`); USB-Serial-JTAG belongs to DevLink, UART0 is the text console:
+  Guition 4.3" `guition_p4_43` on **COM9** (build in `launcher/build`), Guition 7" JC1060P470C `guition_p4_7` on **COM10**
+  (`idf.py -B build_guition_p4_7 -DLX_BOARD=guition_p4_7 -p COM10 build flash`). Porting: `docs/PORTING_GUIDE.md`.
+  `managed_components/` is shared and esp_hosted differs per board: after building the other board, add `reconfigure`.
 
 ## Dev loop (works without touching the board)
 
@@ -67,11 +70,11 @@ python tools\papp_dev.py --port COM9 crash --elf build\apps\hello\hello.elf    #
 python tests\host\test_reloc.py                                               # packer/relocator check
 ```
 
-Apps in `/sd/apps/<dir>/<file>.papp` appear on the home screen; a directory there with no `.papp` is a folder of apps
+Apps in `/sd/apps/<dir>/<file>.papp` appear on the home screen; a directory there with no `.papp` is a folder of apps (its own `icon.png` optional)
 (`/sd/apps/<folder>/<dir>/<file>.papp`, one level; `deploy` finds an app moved into one). Icon: an `icon.png` in the app's source
 folder (PNG, square, best 88x88, transparency OK; corners are rounded by the launcher) is copied by
 `papp_build.py` and uploaded by `deploy` to `/sd/apps/<dir>/icon.png`; without one the tile shows the initial. Every `papp_dev.py`
-command also sets the board clock from the PC.
+command also sets the board clock from the PC (`--no-time` skips it; `info` shows `time` and `rtc`).
 `deploy` = upload to `/sd/apps/<name>/<name>.papp` → run → stream logs → exit code of the app
 (124 timeout). `shot out.png` = screenshot of the visible framebuffer, in landscape (open it to see
 the screen). Other commands: `info ls stat put get rm mkdir mv run stop status log reboot crash-clear`;

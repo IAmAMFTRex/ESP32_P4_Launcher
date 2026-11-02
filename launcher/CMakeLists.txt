@@ -13,7 +13,6 @@ endif()
 set(EXTRA_COMPONENT_DIRS "${LX_ROOT}/components" "${LX_ROOT}/boards/${LX_BOARD}")
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults;${LX_ROOT}/boards/${LX_BOARD}/sdkconfig.board")
 set(SDKCONFIG "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.${LX_BOARD}")
-
 # The image's version is what the SD update compares
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LX_ROOT}/components/lx_common/include/lx_common.h")
 file(STRINGS "${LX_ROOT}/components/lx_common/include/lx_common.h" LX_VER_LINE REGEX "LX_LAUNCHER_VERSION")
@@ -21,4 +20,10 @@ string(REGEX MATCH "\"([^\"]+)\"" _ "${LX_VER_LINE}")
 set(PROJECT_VER "${CMAKE_MATCH_1}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(launcher)
+# The project name is in the image: an update refuses an image whose name differs,
+# so each board only ever installs its own launcher (the first board keeps the old name)
+if(LX_BOARD STREQUAL "guition_p4_43")
+    project(launcher)
+else()
+    project(launcher_${LX_BOARD})
+endif()

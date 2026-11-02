@@ -197,7 +197,10 @@ static void h_info(uint16_t seq)
     jstr(&j, lx_app_path());
     jcat(&j, ",\"net_state\":%d,\"ip\":", (int)lx_net_state());
     jstr(&j, lx_net_ip());
-    jcat(&j, ",\"reset_reason\":%d}", (int)esp_reset_reason());
+    int64_t rtc = -1;
+    bsp_rtc_get(&rtc);                      /* -1: no RTC, or it lost the time */
+    jcat(&j, ",\"time\":%lld,\"rtc\":%lld,\"reset_reason\":%d}", (long long)time(NULL), (long long)rtc,
+         (int)esp_reset_reason());
     reply(DL_INFO, seq, j.buf, j.len);
 }
 
@@ -470,6 +473,9 @@ static void h_input(uint16_t seq, const uint8_t *p, uint32_t len)
         memcpy(&r, p, sizeof(r));
         lx_input_inject_key(r.usage, r.mods, r.hold_ms);
         reply(DL_INPUT, seq, NULL, 0);
+    } else if (len >= 2 && p[0] == DL_INPUT_UNMAP) {
+        lx_input_pad_set_map(p[1], NULL);           /* back to the pad's own layout */
+        reply(DL_INPUT, seq, NULL, 0);
     } else if (len >= 1 && p[0] == DL_INPUT_STATE) {
         jbuf_t j = { .buf = s_tx, .cap = DL_MAX_PAYLOAD };
         char desc[128];
@@ -507,7 +513,10 @@ static void dispatch(uint8_t type, uint16_t seq, uint8_t *p, uint32_t len)
             memcpy(&secs, p, sizeof(secs));
             if (len >= 16 && getenv("TZ")) memcpy(&secs, p + 8, sizeof(secs));
             struct timeval tv = { .tv_sec = (time_t)secs };
+            int64_t was = time(NULL);
             settimeofday(&tv, NULL);
+            /* The RTC keeps real UTC only: with no time zone set this is local time */
+            if (getenv("TZ") && len >= 16 && (secs - was > 2 || was - secs > 2)) bsp_rtc_set(secs);
             reply_str(type, seq, "ok");
         } else {
             reply_err(type, seq, "bad TIME request");

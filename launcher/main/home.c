@@ -35,6 +35,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 #include "lvgl.h"
@@ -92,6 +93,8 @@ static char s_last[160];        /* last launched .papp */
 static lv_display_t *s_disp;
 static uint16_t *s_frame;
 static lv_obj_t *s_home, *s_settings;
+static lv_obj_t *s_clk_area;            /* home clock: opens the clock setup (RTC boards) */
+static void on_clk_open(lv_event_t *ev);
 static lv_obj_t *s_clock, *s_date, *s_sd_free, *s_sd_apps, *s_grid, *s_count, *s_title;
 static lv_obj_t *s_sys_cpu, *s_sys_sram, *s_sys_psram, *s_sys_temp, *s_sys_pads, *s_sys_state;
 static lv_obj_t *s_vol_slider, *s_bri_slider, *s_vol_val, *s_bri_val, *s_info;
@@ -228,6 +231,10 @@ static void scan_dir(const char *base, const char *parent)
         e->is_folder = true;
         snprintf(e->path, sizeof(e->path), "%s", dir);
         snprintf(e->name, sizeof(e->name), "%s", de->d_name);
+        char icon[160];                             /* a folder can have its own icon too */
+        struct stat st;
+        snprintf(icon, sizeof(icon), "%s/icon.png", dir);
+        if (stat(icon, &st) == 0) snprintf(e->icon, sizeof(e->icon), "S:%s", icon);
         scan_dir(dir, de->d_name);
     }
     closedir(d);
@@ -345,6 +352,10 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, lv_color_t color
     return l;
 }
 
+/* The layout is drawn for 800x480; on a bigger screen right-hand items move by
+ * s_dx, bottom ones by s_dy, and full-width ones grow by them */
+static int s_dx, s_dy;
+
 static lv_obj_t *panel(lv_obj_t *parent, int x, int y, int w, int h, int radius)
 {
     lv_obj_t *p = lv_obj_create(parent);
@@ -424,6 +435,7 @@ static void home_focus_list(void)
     lv_obj_remove_state(s_gear, LV_STATE_FOCUSED);      /* s_focused may have been reset */
     lv_obj_remove_state(s_count, LV_STATE_FOCUSED);
     lv_obj_remove_state(s_sd, LV_STATE_FOCUSED);
+    if (s_clk_area) lv_obj_remove_state(s_clk_area, LV_STATE_FOCUSED);
     for (uint32_t i = 0; i < lv_obj_get_child_count(s_grid); i++) {
         lv_obj_t *c = lv_obj_get_child(s_grid, i);
         if (lv_obj_has_flag(c, LV_OBJ_FLAG_CLICKABLE)) focus_add(c);
@@ -431,6 +443,7 @@ static void home_focus_list(void)
     focus_add(s_gear);
     focus_add(s_sd);
     focus_add(s_count);
+    if (s_clk_area) focus_add(s_clk_area);
     bool still_there = false;
     for (int i = 0; i < s_nfocus; i++) still_there |= s_focusable[i] == keep;
     s_focused = NULL;
@@ -477,12 +490,23 @@ static void build_home(void)
     lv_obj_t *sub = label(s_home, &lv_font_montserrat_16, C_DIM, "ESP32-P4  Application Hub");
     lv_obj_set_pos(sub, 22, 62);
 
+    if (bsp_info()->caps & BSP_CAP_RTC) {               /* the clock opens its setup */
+        s_clk_area = lv_obj_create(s_home);
+        lv_obj_remove_style_all(s_clk_area);
+        lv_obj_set_pos(s_clk_area, 340 + s_dx / 2, 4);
+        lv_obj_set_size(s_clk_area, 270, 82);
+        lv_obj_add_flag(s_clk_area, LV_OBJ_FLAG_CLICKABLE);
+        focus_style(s_clk_area, 14);
+        lv_obj_set_style_bg_color(s_clk_area, C_FOCUS, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(s_clk_area, LV_OPA_COVER, LV_STATE_PRESSED);
+        lv_obj_add_event_cb(s_clk_area, on_clk_open, LV_EVENT_CLICKED, NULL);
+    }
     s_clock = label(s_home, &lv_font_montserrat_48, C_TEXT, "--:--");
-    lv_obj_set_pos(s_clock, 352, 6);
+    lv_obj_set_pos(s_clock, 352 + s_dx / 2, 6);
     s_date = label(s_home, &lv_font_montserrat_16, C_DIM, "");
-    lv_obj_set_pos(s_date, 356, 62);
+    lv_obj_set_pos(s_date, 356 + s_dx / 2, 62);
 
-    lv_obj_t *sd = s_sd = panel(s_home, 506, 10, 214, 76, 14);
+    lv_obj_t *sd = s_sd = panel(s_home, 506 + s_dx, 10, 214, 76, 14);
     lv_obj_add_flag(sd, LV_OBJ_FLAG_CLICKABLE);
     focus_style(sd, 14);
     lv_obj_set_style_bg_color(sd, C_FOCUS, LV_STATE_PRESSED);
@@ -498,7 +522,7 @@ static void build_home(void)
 
     s_gear = lv_obj_create(s_home);
     lv_obj_remove_style_all(s_gear);
-    lv_obj_set_pos(s_gear, 732, 20);
+    lv_obj_set_pos(s_gear, 732 + s_dx, 20);
     lv_obj_set_size(s_gear, 56, 56);
     lv_obj_add_flag(s_gear, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(s_gear, LV_OPA_COVER, 0);
@@ -523,7 +547,7 @@ static void build_home(void)
     s_grid = lv_obj_create(s_home);
     lv_obj_remove_style_all(s_grid);
     lv_obj_set_pos(s_grid, 10, 128);
-    lv_obj_set_size(s_grid, 780, 292);
+    lv_obj_set_size(s_grid, 780 + s_dx, 292 + s_dy);
     lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_all(s_grid, 6, 0);
     lv_obj_set_style_pad_column(s_grid, 8, 0);
@@ -532,7 +556,7 @@ static void build_home(void)
     lv_obj_set_scrollbar_mode(s_grid, LV_SCROLLBAR_MODE_ACTIVE);
 
     /* System bar */
-    lv_obj_t *bar = panel(s_home, 16, 426, 768, 46, 12);
+    lv_obj_t *bar = panel(s_home, 16, 426 + s_dy, 768 + s_dx, 46, 12);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     s_sys_cpu = label(bar, &lv_font_montserrat_14, C_TEXT, "");
@@ -587,13 +611,13 @@ static void on_slider(lv_event_t *ev)
 static lv_obj_t *settings_row(lv_obj_t *parent, int y, const char *title, const char *symbol,
                               int min, int max, int value, lv_obj_t **val_out)
 {
-    lv_obj_t *row = panel(parent, 24, y, 752, 64, 14);
+    lv_obj_t *row = panel(parent, 24, y, 752 + s_dx, 64, 14);
     lv_obj_t *ic = label(row, &lv_font_montserrat_24, C_ACCENT, symbol);
     lv_obj_set_pos(ic, 18, 18);
     lv_obj_t *t = label(row, &lv_font_montserrat_20, C_TEXT, title);
     lv_obj_set_pos(t, 60, 20);
     lv_obj_t *s = lv_slider_create(row);
-    lv_obj_set_size(s, 420, 12);
+    lv_obj_set_size(s, 420 + s_dx, 12);
     lv_obj_set_pos(s, 220, 26);
     lv_slider_set_range(s, min, max);
     lv_slider_set_value(s, value, LV_ANIM_OFF);
@@ -605,7 +629,7 @@ static lv_obj_t *settings_row(lv_obj_t *parent, int y, const char *title, const 
     lv_obj_add_event_cb(s, on_slider, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(s, on_slider, LV_EVENT_RELEASED, NULL);
     *val_out = label(row, &lv_font_montserrat_20, C_DIM, "");
-    lv_obj_set_pos(*val_out, 668, 20);
+    lv_obj_set_pos(*val_out, 668 + s_dx, 20);
     return s;
 }
 
@@ -737,7 +761,7 @@ static void build_map_screen(void)
     };
     for (int i = 0; i < 2; i++) {
         lv_obj_t *btn = lv_button_create(s_map_scr);
-        lv_obj_set_pos(btn, b[i].x, 390);
+        lv_obj_set_pos(btn, b[i].x + s_dx / 2, 390 + s_dy);
         lv_obj_set_style_bg_color(btn, C_BLUE, 0);
         lv_obj_center(label(btn, &lv_font_montserrat_20, C_TEXT, b[i].text));
         lv_obj_add_event_cb(btn, b[i].cb, LV_EVENT_CLICKED, NULL);
@@ -917,13 +941,13 @@ static void build_wifi_screens(void)
     lv_obj_set_pos(s_wifi_status, 24, 72);
     s_wifi_scan = wifi_button(s_wifi_scr, 24, 104, 120, "Scan", on_wifi_scan);
     s_wifi_forget = wifi_button(s_wifi_scr, 160, 104, 200, "Forget network", on_wifi_forget);
-    s_web_btn = wifi_button(s_wifi_scr, 500, 14, 276, "File manager", on_web_toggle);
+    s_web_btn = wifi_button(s_wifi_scr, 500 + s_dx, 14, 276, "File manager", on_web_toggle);
     s_web_info = label(s_wifi_scr, &lv_font_montserrat_16, C_ACCENT, "");
-    lv_obj_set_pos(s_web_info, 500, 72);
+    lv_obj_set_pos(s_web_info, 500 + s_dx, 72);
     lv_obj_t *z = label(s_wifi_scr, &lv_font_montserrat_16, C_TEXT, "Time zone");
-    lv_obj_set_pos(z, 390, 116);
+    lv_obj_set_pos(z, 390 + s_dx, 116);
     s_wifi_tz = lv_dropdown_create(s_wifi_scr);
-    lv_obj_set_pos(s_wifi_tz, 484, 104);
+    lv_obj_set_pos(s_wifi_tz, 484 + s_dx, 104);
     lv_obj_set_width(s_wifi_tz, 292);
     lv_dropdown_clear_options(s_wifi_tz);
     for (int i = 0; i < lx_net_tz_count(); i++)
@@ -934,7 +958,7 @@ static void build_wifi_screens(void)
     lv_obj_add_event_cb(s_wifi_tz, on_wifi_tz, LV_EVENT_VALUE_CHANGED, NULL);
     s_wifi_list = lv_list_create(s_wifi_scr);
     lv_obj_set_pos(s_wifi_list, 24, 160);
-    lv_obj_set_size(s_wifi_list, 752, 306);
+    lv_obj_set_size(s_wifi_list, 752 + s_dx, 306 + s_dy);
     lv_obj_set_style_bg_color(s_wifi_list, C_PANEL, 0);
     lv_obj_set_style_border_color(s_wifi_list, C_BORDER, 0);
 
@@ -945,16 +969,212 @@ static void build_wifi_screens(void)
     lv_obj_set_pos(s_pw_title, 24, 16);
     s_pw_text = lv_textarea_create(s_pw_scr);
     lv_obj_set_pos(s_pw_text, 24, 52);
-    lv_obj_set_size(s_pw_text, 752, 52);
+    lv_obj_set_size(s_pw_text, 752 + s_dx, 52);
     lv_textarea_set_one_line(s_pw_text, true);
     lv_textarea_set_password_mode(s_pw_text, true);
     lv_textarea_set_max_length(s_pw_text, 63);
     lv_obj_t *kb = lv_keyboard_create(s_pw_scr);
-    lv_obj_set_size(kb, 800, 360);
+    lv_obj_set_size(kb, 800 + s_dx, 360);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(kb, s_pw_text);
     lv_obj_add_event_cb(kb, on_pw_key, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(kb, on_pw_key, LV_EVENT_CANCEL, NULL);
+}
+
+/* ── Clock setup (boards with an RTC) ───────────────────────────────────
+ * Opened from the clock on the home screen. The time is entered as local time
+ * in the chosen zone; the RTC keeps the matching UTC. */
+
+enum { CF_DAY, CF_MONTH, CF_YEAR, CF_HOUR, CF_MIN, CF_N };
+static const struct { const char *name; int w; } k_clk_fields[CF_N] = {
+    { "Day", 110 }, { "Month", 110 }, { "Year", 150 }, { "Hour", 110 }, { "Minute", 110 },
+};
+static lv_obj_t *s_clk_scr, *s_clk_back, *s_clk_tz, *s_clk_sync, *s_clk_cancel, *s_clk_save;
+static lv_obj_t *s_clk_box[CF_N], *s_clk_val[CF_N], *s_clk_note;
+static int s_clk[CF_N];
+
+static int clk_days(int month, int year)
+{
+    static const int d[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    return d[month - 1] + (month == 2 && leap);
+}
+
+static void clk_show(void)
+{
+    int dmax = clk_days(s_clk[CF_MONTH], s_clk[CF_YEAR]);
+    if (s_clk[CF_DAY] > dmax) s_clk[CF_DAY] = dmax;
+    for (int i = 0; i < CF_N; i++)
+        lv_label_set_text_fmt(s_clk_val[i], i == CF_YEAR ? "%d" : "%02d", s_clk[i]);
+}
+
+static void clk_load(void)
+{
+    time_t now = time(NULL);
+    struct tm tm;
+    if (now < 1704067200) now = 1767268800;         /* not set: 2026-01-01 12:00 */
+    localtime_r(&now, &tm);
+    s_clk[CF_DAY] = tm.tm_mday;
+    s_clk[CF_MONTH] = tm.tm_mon + 1;
+    s_clk[CF_YEAR] = tm.tm_year + 1900;
+    s_clk[CF_HOUR] = tm.tm_hour;
+    s_clk[CF_MIN] = tm.tm_min;
+    clk_show();
+}
+
+/* +1 / -1 on a field, wrapping around its range */
+static void clk_step(int f, int d)
+{
+    static const int lo[CF_N] = { 1, 1, 2024, 0, 0 }, hi_fixed[CF_N] = { 0, 12, 2099, 23, 59 };
+    int hi = f == CF_DAY ? clk_days(s_clk[CF_MONTH], s_clk[CF_YEAR]) : hi_fixed[f];
+    int v = s_clk[f] + d;
+    s_clk[f] = v > hi ? lo[f] : v < lo[f] ? hi : v;
+    clk_show();
+    lv_label_set_text(s_clk_note, "");
+}
+
+static int clk_field_of(lv_obj_t *o)
+{
+    for (int i = 0; i < CF_N; i++) if (o && s_clk_box[i] == o) return i;
+    return -1;
+}
+
+/* Touch: the upper half of a field counts up, the lower half down */
+static void on_clk_box(lv_event_t *ev)
+{
+    lv_obj_t *box = lv_event_get_target(ev);
+    lv_indev_t *in = lv_indev_active();
+    if (!in || lv_indev_get_type(in) != LV_INDEV_TYPE_POINTER) return;
+    lv_point_t p;
+    lv_indev_get_point(in, &p);
+    lv_area_t a;
+    lv_obj_get_coords(box, &a);
+    clk_step(clk_field_of(box), p.y < (a.y1 + a.y2) / 2 ? 1 : -1);
+    focus_set(box);
+}
+
+static void clk_focus(void)
+{
+    focus_clear_list();
+    focus_add(s_clk_back);
+    focus_add(s_clk_tz);
+    for (int i = 0; i < CF_N; i++) focus_add(s_clk_box[i]);
+    focus_add(s_clk_sync);
+    focus_add(s_clk_cancel);
+    focus_add(s_clk_save);
+    s_focused = NULL;
+    focus_set(s_clk_box[CF_HOUR]);
+}
+
+static void on_clk_open(lv_event_t *ev)
+{
+    if (s_focused) lv_obj_remove_state(s_focused, LV_STATE_FOCUSED);
+    lv_dropdown_set_selected(s_clk_tz, lx_net_tz_get());
+    clk_load();
+    lv_label_set_text(s_clk_note, lx_net_tz_get() ? "" : "Choose your time zone first, then set the local time.");
+    lv_screen_load(s_clk_scr);
+    clk_focus();
+}
+
+static void on_clk_close(lv_event_t *ev)
+{
+    show_home();
+}
+
+static void on_clk_tz(lv_event_t *ev)
+{
+    lx_net_tz_set(lv_dropdown_get_selected(s_clk_tz));
+    lv_dropdown_set_selected(s_wifi_tz, lv_dropdown_get_selected(s_clk_tz));
+    clk_load();                                     /* the same moment in the new zone */
+    lv_label_set_text(s_clk_note, "");
+}
+
+static void clk_after_sync(lv_timer_t *t)
+{
+    clk_load();
+    lv_label_set_text(s_clk_note, "Time taken from the internet and saved.");
+}
+
+static void on_clk_sync(lv_event_t *ev)
+{
+    if (lx_net_state() != LX_NET_CONNECTED) {
+        lv_label_set_text(s_clk_note, "Connect to Wi-Fi first (Settings, Wi-Fi).");
+        return;
+    }
+    lx_net_time_sync();
+    lv_label_set_text(s_clk_note, "Asking the internet for the time...");
+    lv_timer_t *t = lv_timer_create(clk_after_sync, 3000, NULL);
+    lv_timer_set_repeat_count(t, 1);
+}
+
+static void update_status(lv_timer_t *t);
+
+static void on_clk_save(lv_event_t *ev)
+{
+    struct tm tm = {
+        .tm_year = s_clk[CF_YEAR] - 1900, .tm_mon = s_clk[CF_MONTH] - 1, .tm_mday = s_clk[CF_DAY],
+        .tm_hour = s_clk[CF_HOUR], .tm_min = s_clk[CF_MIN], .tm_isdst = -1,    /* the zone decides summer time */
+    };
+    time_t t = mktime(&tm);
+    struct timeval tv = { .tv_sec = t };
+    settimeofday(&tv, NULL);
+    esp_err_t err = bsp_rtc_set(t);
+    ESP_LOGI(TAG, "clock set by hand, RTC %s", esp_err_to_name(err));
+    update_status(NULL);
+    if (err == ESP_OK) show_home();
+    else lv_label_set_text(s_clk_note, "The clock is set, but the RTC did not take it.");
+}
+
+static void build_clock_screen(void)
+{
+    s_clk_scr = lv_obj_create(NULL);
+    lv_obj_remove_flag(s_clk_scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_clk_scr, C_BG_TOP, 0);
+    lv_obj_set_style_bg_grad_color(s_clk_scr, C_BG_BOTTOM, 0);
+    lv_obj_set_style_bg_grad_dir(s_clk_scr, LV_GRAD_DIR_VER, 0);
+    s_clk_back = wifi_button(s_clk_scr, 16, 14, 56, LV_SYMBOL_LEFT, on_clk_close);
+    lv_obj_set_pos(label(s_clk_scr, &lv_font_montserrat_28, C_TEXT, "Date and time"), 92, 20);
+
+    lv_obj_set_pos(label(s_clk_scr, &lv_font_montserrat_20, C_TEXT, "Time zone"), 24, 96);
+    s_clk_tz = lv_dropdown_create(s_clk_scr);
+    lv_obj_set_pos(s_clk_tz, 150, 84);
+    lv_obj_set_width(s_clk_tz, 292);
+    lv_dropdown_clear_options(s_clk_tz);
+    for (int i = 0; i < lx_net_tz_count(); i++)
+        lv_dropdown_add_option(s_clk_tz, lx_net_tz_name(i), LV_DROPDOWN_POS_LAST);
+    lv_obj_set_style_outline_width(s_clk_tz, 3, LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_color(s_clk_tz, C_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(s_clk_tz, on_clk_tz, LV_EVENT_VALUE_CHANGED, NULL);
+
+    int total = -20, gap = 20;
+    for (int i = 0; i < CF_N; i++) total += k_clk_fields[i].w + gap;
+    int x = (800 + s_dx - total) / 2, y = 180 + s_dy / 3;
+    for (int i = 0; i < CF_N; i++) {
+        int w = k_clk_fields[i].w;
+        lv_obj_t *n = label(s_clk_scr, &lv_font_montserrat_16, C_DIM, k_clk_fields[i].name);
+        lv_obj_set_width(n, w);
+        lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_pos(n, x, y - 26);
+        lv_obj_t *b = s_clk_box[i] = panel(s_clk_scr, x, y, w, 120, 14);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        focus_style(b, 14);
+        lv_obj_add_event_cb(b, on_clk_box, LV_EVENT_CLICKED, NULL);
+        lv_obj_align(label(b, &lv_font_montserrat_16, C_DIM, LV_SYMBOL_UP), LV_ALIGN_TOP_MID, 0, 6);
+        lv_obj_align(label(b, &lv_font_montserrat_16, C_DIM, LV_SYMBOL_DOWN), LV_ALIGN_BOTTOM_MID, 0, -6);
+        s_clk_val[i] = label(b, &lv_font_montserrat_48, C_TEXT, "");
+        lv_obj_center(s_clk_val[i]);
+        x += w + gap;
+    }
+    lv_obj_t *hint = label(s_clk_scr, &lv_font_montserrat_16, C_DIM,
+                           "Left / right picks a field, up / down changes it, A goes to Save. Touch: tap the top or bottom of a field.");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, y + 136);
+    s_clk_note = label(s_clk_scr, &lv_font_montserrat_16, C_ACCENT, "");
+    lv_obj_align(s_clk_note, LV_ALIGN_TOP_MID, 0, y + 166);
+
+    int by = 400 + s_dy;
+    s_clk_sync = wifi_button(s_clk_scr, 24, by, 260, LV_SYMBOL_REFRESH " Sync from internet", on_clk_sync);
+    s_clk_cancel = wifi_button(s_clk_scr, 504 + s_dx, by, 128, "Cancel", on_clk_close);
+    s_clk_save = wifi_button(s_clk_scr, 648 + s_dx, by, 128, "Save", on_clk_save);
 }
 
 static void wifi_tick(void)
@@ -1024,22 +1244,23 @@ static void build_settings(void)
     s_vol_slider = settings_row(s_settings, 80, "Volume", LV_SYMBOL_VOLUME_MAX, 0, 100, s_volume, &s_vol_val);
     s_bri_slider = settings_row(s_settings, 150, "Brightness", LV_SYMBOL_IMAGE, 10, 100, s_brightness, &s_bri_val);
 
-    lv_obj_t *dev = panel(s_settings, 24, 220, 752, 52, 14);
+    lv_obj_t *dev = panel(s_settings, 24, 220, 752 + s_dx, 52, 14);
     lv_obj_t *di = label(dev, &lv_font_montserrat_24, C_ACCENT, LV_SYMBOL_LIST);
     lv_obj_set_pos(di, 18, 13);
     lv_obj_t *dt = label(dev, &lv_font_montserrat_20, C_TEXT, "Show developer apps");
     lv_obj_set_pos(dt, 60, 14);
     s_dev_switch = lv_switch_create(dev);
-    lv_obj_set_pos(s_dev_switch, 664, 10);
+    lv_obj_set_pos(s_dev_switch, 664 + s_dx, 10);
     lv_obj_set_style_bg_color(s_dev_switch, C_BLUE, LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_outline_width(s_dev_switch, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_dev_switch, C_ACCENT, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_pad(s_dev_switch, 6, LV_STATE_FOCUSED);
     if (s_show_dev) lv_obj_add_state(s_dev_switch, LV_STATE_CHECKED);
     lv_obj_add_event_cb(s_dev_switch, on_dev_switch, LV_EVENT_VALUE_CHANGED, NULL);
+    int bw = (752 + s_dx - 2 * 10) / 3;        /* three buttons share the row */
     s_map_btn = lv_button_create(s_settings);
     lv_obj_set_pos(s_map_btn, 24, 278);
-    lv_obj_set_size(s_map_btn, 244, 52);
+    lv_obj_set_size(s_map_btn, bw, 52);
     lv_obj_set_style_bg_color(s_map_btn, C_BLUE, 0);
     lv_obj_set_style_outline_width(s_map_btn, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_map_btn, C_ACCENT, LV_STATE_FOCUSED);
@@ -1048,8 +1269,8 @@ static void build_settings(void)
     lv_obj_add_event_cb(s_map_btn, on_map_start, LV_EVENT_CLICKED, NULL);
     build_map_screen();
     s_wifi_btn = lv_button_create(s_settings);
-    lv_obj_set_pos(s_wifi_btn, 278, 278);
-    lv_obj_set_size(s_wifi_btn, 244, 52);
+    lv_obj_set_pos(s_wifi_btn, 24 + bw + 10, 278);
+    lv_obj_set_size(s_wifi_btn, bw, 52);
     lv_obj_set_style_bg_color(s_wifi_btn, C_BLUE, 0);
     lv_obj_set_style_outline_width(s_wifi_btn, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_wifi_btn, C_ACCENT, LV_STATE_FOCUSED);
@@ -1058,8 +1279,8 @@ static void build_settings(void)
     lv_obj_add_event_cb(s_wifi_btn, on_wifi_open, LV_EVENT_CLICKED, NULL);
     build_wifi_screens();
     s_update_btn = lv_button_create(s_settings);
-    lv_obj_set_pos(s_update_btn, 532, 278);
-    lv_obj_set_size(s_update_btn, 244, 52);
+    lv_obj_set_pos(s_update_btn, 24 + 2 * (bw + 10), 278);
+    lv_obj_set_size(s_update_btn, bw, 52);
     lv_obj_set_style_bg_color(s_update_btn, C_BLUE, 0);
     lv_obj_set_style_outline_width(s_update_btn, 3, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_color(s_update_btn, C_ACCENT, LV_STATE_FOCUSED);
@@ -1067,7 +1288,7 @@ static void build_settings(void)
     lv_obj_center(label(s_update_btn, &lv_font_montserrat_20, C_TEXT, LV_SYMBOL_DOWNLOAD " Update"));
     lv_obj_add_event_cb(s_update_btn, on_upd_check, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t *info = panel(s_settings, 24, 336, 752, 136, 14);
+    lv_obj_t *info = panel(s_settings, 24, 336, 752 + s_dx, 136 + s_dy, 14);
     s_info = label(info, &lv_font_montserrat_14, C_DIM, "");
     lv_obj_set_pos(s_info, 18, 10);
     lv_obj_set_style_text_line_space(s_info, 6, 0);
@@ -1079,17 +1300,19 @@ static void refresh_info(void)
     const bsp_info_t *b = bsp_info();
     uint64_t total = 0, free_b = 0;
     esp_vfs_fat_info("/sd", &total, &free_b);
-    char buf[512];
+    char buf[512], batt[32] = "";
+    int mv = bsp_battery_mv();
+    if (mv >= 0) snprintf(batt, sizeof(batt), "   Battery pin %.2f V", mv / 1000.0);   /* -1: none */
     snprintf(buf, sizeof(buf),
              "Board         %s\n"
              "Launcher      v%s   (app ABI %s, ESP-IDF %s)\n"
              "Memory        %u KB internal free,  %u KB PSRAM free\n"
-             "SD card       %.1f GB free of %.1f GB,  %d apps   Battery pin %.2f V\n"
+             "SD card       %.1f GB free of %.1f GB,  %d apps%s\n"
              "Input         %s",
              b->name, LX_LAUNCHER_VERSION, LX_ABI_STRING, esp_get_idf_version(),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
-             free_b / 1e9, total / 1e9, s_ninstalled, bsp_battery_mv() / 1000.0, "");
+             free_b / 1e9, total / 1e9, s_ninstalled, batt, "");
     size_t n = strlen(buf);
     lx_input_describe(buf + n, sizeof(buf) - n);
     if (!buf[n]) snprintf(buf + n, sizeof(buf) - n, "no gamepad or keyboard");
@@ -1271,6 +1494,8 @@ static void folder_delete(const char *name)
             return;
         }
     }
+    snprintf(src, sizeof(src), "%s/icon.png", dir);   /* the folder's own icon goes with it */
+    remove(src);
     bool ok = rmdir(dir) == 0;
     home_view(NULL);
     if (!ok) folder_message("Folder kept", "Its apps are back on the main page, but it still holds other files. Use the Files app to see them.");
@@ -1384,6 +1609,10 @@ static void update_status(lv_timer_t *t)
 
     if (tick++ % 10 == 0) {
         uint64_t total = 0, free_b = 0;
+        static bool had_card = true;
+        bool card = bsp_sdcard_mounted();
+        if (card && !had_card && lv_screen_active() == s_home) refresh_home();    /* inserted after boot */
+        had_card = card;
         if (esp_vfs_fat_info("/sd", &total, &free_b) == ESP_OK) {
             snprintf(buf, sizeof(buf), "%.1f GB free", free_b / 1e9);
             lv_label_set_text(s_sd_free, buf);
@@ -1705,7 +1934,15 @@ static void poll_keys(void)
             if (ok || back) lv_obj_send_event(s_crash_ok, LV_EVENT_CLICKED, NULL);
             continue;
         }
-        if (dx && s_focused == s_wifi_tz) {
+        if (dy && s_clk_scr && clk_field_of(s_focused) >= 0) {
+            clk_step(clk_field_of(s_focused), -dy);
+        } else if (ok && s_clk_scr && clk_field_of(s_focused) >= 0) {
+            focus_set(s_clk_save);                  /* up / down change the field: A goes on to Save */
+        } else if (dx && s_clk_tz && s_focused == s_clk_tz) {
+            int n = lv_dropdown_get_option_count(s_clk_tz);
+            lv_dropdown_set_selected(s_clk_tz, (lv_dropdown_get_selected(s_clk_tz) + n + dx) % n);
+            on_clk_tz(NULL);
+        } else if (dx && s_focused == s_wifi_tz) {
             int n = lv_dropdown_get_option_count(s_wifi_tz);
             lv_dropdown_set_selected(s_wifi_tz, (lv_dropdown_get_selected(s_wifi_tz) + n + dx) % n);
             on_wifi_tz(NULL);
@@ -1726,6 +1963,8 @@ static void poll_keys(void)
         } else if (back && lv_screen_active() == s_home && s_folder[0]) {
             folder_leave();
         } else if (back && lv_screen_active() == s_settings) {
+            show_home();
+        } else if (back && s_clk_scr && lv_screen_active() == s_clk_scr) {
             show_home();
         } else if (back && lv_screen_active() == s_wifi_scr) {
             show_settings();
@@ -1860,8 +2099,11 @@ esp_err_t home_start(void)
     lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch, touch_read);
 
+    s_dx = w - 800;
+    s_dy = h_px - 480;
     build_home();
     build_settings();
+    if (s_clk_area) build_clock_screen();
     refresh_home();
     lv_screen_load(s_home);
     lv_timer_create(update_status, 1000, NULL);

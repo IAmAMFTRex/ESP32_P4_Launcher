@@ -51,3 +51,4 @@ int         lx_net_tz_count(void);
 const char *lx_net_tz_name(int index);
 int         lx_net_tz_get(void);            /* 0 = not set: clock shown as DevLink set it */
 void        lx_net_tz_set(int index);
+void        lx_net_time_sync(void);   /* NTP now (once connected); the result also goes to the RTC */

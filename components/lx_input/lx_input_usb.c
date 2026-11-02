@@ -292,9 +292,11 @@ static void driver_cb(hid_host_device_handle_t h, const hid_host_driver_event_t 
 /* Top-level collection Generic Desktop / Joystick or Gamepad? */
 static bool desc_is_gamepad(const uint8_t *desc, size_t len)
 {
+    /* Any collection: a receiver may list a mouse or keyboard before the pad */
     for (size_t i = 0; i + 3 < len; i++) {
-        if (desc[i] == 0x05 && desc[i + 1] == 0x01 && desc[i + 2] == 0x09)
-            return desc[i + 3] == 0x04 || desc[i + 3] == 0x05;
+        if (desc[i] == 0x05 && desc[i + 1] == 0x01 && desc[i + 2] == 0x09 &&
+            (desc[i + 3] == 0x04 || desc[i + 3] == 0x05))
+            return true;
     }
     return false;
 }
@@ -362,6 +364,7 @@ static void open_device(hid_host_device_handle_t h)
         const uint8_t *desc = hid_host_get_report_descriptor(h, &dlen);
         /* No descriptor: assume a gamepad, like the reference did */
         if (!desc || desc_is_gamepad(desc, dlen)) d->kind = DEV_PAD;
+        else ESP_LOG_BUFFER_HEX_LEVEL(TAG, desc, dlen < 128 ? dlen : 128, ESP_LOG_DEBUG);   /* to see what it is */
         if (desc && d->kind == DEV_PAD) {
             d->has_layout = hid_layout_parse(desc, dlen, &d->layout);
             ESP_LOGI(TAG, "report descriptor %u bytes: %s, %d buttons, hat %d, id %d", (unsigned)dlen,
@@ -446,6 +449,7 @@ esp_err_t lx_input_usb_start(void)
         return e;
     }
     xTaskCreatePinnedToCore(hid_task, "lx_hid", 4096, NULL, 6, NULL, 1);
+    if (lx_input_xinput_start() != ESP_OK) ESP_LOGW(TAG, "XInput client failed");
     ESP_LOGI(TAG, "USB HID host ready");
     return ESP_OK;
 }

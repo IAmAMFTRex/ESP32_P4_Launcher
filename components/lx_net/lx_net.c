@@ -1,4 +1,5 @@
 #include "lx_net.h"
+#include "bsp.h"
 
 #include <errno.h>
 #include <stdarg.h>
@@ -93,6 +94,12 @@ static void creds_save(bool keep)
 
 /* ── Events ──────────────────────────────────────────────────── */
 
+/* Network time is real UTC: keep it in the board's RTC for the next power-on */
+static void on_sntp_sync(struct timeval *tv)
+{
+    if (bsp_rtc_set(tv->tv_sec) == ESP_OK) ESP_LOGI(TAG, "time from NTP, saved to the RTC");
+}
+
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
@@ -115,6 +122,9 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&ev->ip_info.ip));
         s_retries = 0;
         s_state = LX_NET_CONNECTED;
+        wifi_ap_record_t ap;            /* the C6 may rejoin a network it saved itself (another firmware's) */
+        if (!s_ssid[0] && esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+            snprintf(s_ssid, sizeof(s_ssid), "%s", (char *)ap.ssid);
         ESP_LOGI(TAG, "connected to %s, %s", s_ssid, s_ip);
         esp_netif_dns_info_t dns = { 0 };
         esp_netif_get_dns_info(ev->esp_netif, ESP_NETIF_DNS_MAIN, &dns);
@@ -129,6 +139,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         if (!s_sntp) {
             s_sntp = true;
             esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+            cfg.sync_cb = on_sntp_sync;
             esp_netif_sntp_init(&cfg);
         }
     }
@@ -230,7 +241,13 @@ static void net_task(void *arg)
             s_want = false;
             s_ssid[0] = s_pass[0] = 0;
             creds_save(false);
-            if (s_started) esp_wifi_disconnect();
+            if (s_started) {
+                esp_wifi_disconnect();
+                esp_wifi_stop();
+                esp_wifi_restore();     /* and whatever the C6 saved for itself, or it rejoins at boot */
+                esp_wifi_set_mode(WIFI_MODE_STA);
+                esp_wifi_start();
+            }
             s_state = s_started ? LX_NET_IDLE : LX_NET_OFF;
             break;
         case CMD_PAUSE:
@@ -305,6 +322,11 @@ void lx_net_pause(bool pause) { post(pause ? CMD_PAUSE : CMD_RESUME); }
 int         lx_net_tz_count(void)      { return ZONES; }
 const char *lx_net_tz_name(int index)  { return index >= 0 && index < ZONES ? k_zones[index].name : ""; }
 int         lx_net_tz_get(void)        { return s_tz; }
+
+void lx_net_time_sync(void)
+{
+    if (s_sntp) esp_sntp_restart();         /* on_sntp_sync saves it to the RTC */
+}
 
 void lx_net_tz_set(int index)
 {
@@ -400,6 +422,11 @@ static void diag_tcp(const char *label, uint32_t addr, int port, const char *req
 static void diag_task(void *arg)
 {
     s_diag[0] = 0;
+    if (!s_started || s_paused) {       /* Wi-Fi calls on a stopped radio crash */
+        diag("state %d: radio off (no saved network and no scan yet, or an app is running)\ndone\n", (int)s_state);
+        s_diag_busy = false;
+        vTaskDelete(NULL);
+    }
     esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     wifi_ap_record_t ap = { 0 };
     esp_netif_ip_info_t ip = { 0 };

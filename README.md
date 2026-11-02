@@ -11,9 +11,9 @@ Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
 ![Home screen](docs/images/home.png)
 
-| Launcher version | App ABI | Toolchain | First board |
+| Launcher version | App ABI | Toolchain | Boards |
 |---|---|---|---|
-| 0.20.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800) |
+| 0.21.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -110,7 +110,7 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - Content browser with folders, Favorites, Recent, search, and per-ROM Run/Resume/Restart/Delete save
 - DevLink: a USB protocol to upload, run, log, screenshot, inject input and read crash reports
 - Self-update from the SD card, with automatic rollback if a new version doesn't start
-- Controllers: USB HID pads are read from their own report descriptor, and any pad can be remapped in Settings
+- Controllers: USB HID pads are read from their own report descriptor, Xbox 360-style (XInput) pads and receivers such as 8BitDo's work too, and any pad can be remapped in Settings
 - Wi-Fi and network time through the on-board ESP32-C6 (connecting isn't tested yet, see Known limitations)
 - Battery level in the system bar
 - Wi-Fi file manager: a web page for the SD card, started from the Wi-Fi screen and protected by a PIN
@@ -136,7 +136,9 @@ The test apps (`hello`, `gfx_demo`, `audio_test`, `input_test`, `thread_test`, `
 
 ## Hardware
 
-Reference board: **Guition ESP32-P4 4.3"**
+Reference board: **Guition ESP32-P4 4.3"**. The launcher also runs on the **Guition JC1060P470C** (7" 1024×600,
+JD9165 panel, real-time clock, `-DLX_BOARD=guition_p4_7`), with the same apps from the same SD card. Adding a board:
+[docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md).
 
 | Part | Detail |
 |---|---|
@@ -213,6 +215,9 @@ own directory: `/sd/apps/<folder>/<app>/<app>.papp`. There is one level of folde
 apps to the main page. Other files in a folder aren't shown on the home screen and are never deleted, so the
 folder stays until they are removed. `papp_dev.py deploy` finds an app that was moved into a folder.
 
+A folder can have its own icon: put an `icon.png` (best 88x88) in its directory, `/sd/apps/<folder>/icon.png`.
+`apps/common/icons/make_folder_icons.py` draws the Games and Emulators icons, `folder_games.png` and `folder_emulators.png`.
+
 ## Preparing the SD card
 
 ```
@@ -246,7 +251,7 @@ player 1.
 
 | Where | Action |
 |---|---|
-| Home screen | D-pad moves, A starts, or tap an icon. B leaves a folder. The SD card panel opens Files |
+| Home screen | D-pad moves, A starts, or tap an icon. B leaves a folder. The SD card panel opens Files. On boards with a real-time clock, the clock opens the date and time setup |
 | App or folder menu | X or Y (Tab on a keyboard), or hold the icon: move an app, rename or delete a folder |
 | New folder | **New folder** at the top right. Type the name by touch or USB keyboard. With only a pad, A accepts the suggested name |
 | Browser | A runs, Y searches, X toggles a favorite, B goes back |
@@ -548,9 +553,7 @@ Further reading:
   FAST region needs it. Teardown protects against leaks, not against a malicious app.
 - **The ABI is a preview,** and may change before 1.0.
 - **PPA scaling steps are 1/16,** so stretched output can leave a few pixels unused.
-- **NTP is untested against the real internet.** Online update works from GitHub Releases (tested 0.19.0 to 0.19.1).
-- **The Wi-Fi file manager page is untested** from a phone or PC.
-- **Xbox-style (XInput) pads aren't supported yet,** and non-Sony HID pads are only tested with sample descriptors.
+- **Xbox One pads (GIP protocol) aren't supported;** Xbox 360-style XInput pads are. Non-Sony HID pads are only tested with sample descriptors.
 - **Battery percentage isn't calibrated** against a real discharge curve.
 - **Not done yet:** mouse, keyboard layouts, rumble, BLE controllers and the pull audio model.
 - **SNES:** no SuperFX games.
