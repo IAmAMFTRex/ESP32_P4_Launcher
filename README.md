@@ -9,7 +9,10 @@ There's no reflashing, no reboot and no flash wear. When it exits, every resourc
 21 applications run this way today, including NES through Neo Geo emulators, Doom, Quake,
 Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
-![Home screen](docs/images/home.png)
+The same launcher runs on more than one board, and the same `.papp` files and SD card work on all of them:
+today the Guition ESP32-P4 4.3" (800×480) and the Guition JC1060P470C 7" (1024×600).
+
+![Home screen: the Emulators folder on the 7-inch board](docs/images/home.png)
 
 | Launcher version | App ABI | Toolchain | Boards |
 |---|---|---|---|
@@ -40,14 +43,19 @@ Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
 ## Screens
 
-All of these are real screenshots, taken from the running board with `papp_dev.py shot`.
+All of these are real screenshots, taken from the running board with `papp_dev.py shot`. The 1024×600
+ones come from the 7" board, the 800×480 ones from the 4.3" board.
 
 | | |
 |---|---|
-| ![Settings](docs/images/settings.png) | ![Content browser](docs/images/browser.png) |
-| **Settings:** volume, brightness, controller mapping, Wi-Fi and system information | **Content browser:** All, Favorites and Recent tabs, with live search. Every emulator gets it from the launcher |
+| ![Home screen with folders](docs/images/folders.png) | ![Games folder](docs/images/games.png) |
+| **Home screen:** folders with their own icons, clock, SD card and settings | **Games folder:** Doom, Duke Nukem 3D, OpenTyrian and Quake |
+| ![Settings](docs/images/settings.png) | ![Date and time](docs/images/date_time.png) |
+| **Settings:** volume, brightness, developer apps, controller mapping, Wi-Fi, update and system information | **Date and time:** on boards with a real-time clock, the home screen clock opens it |
+| ![Paused](docs/images/pause_menu.png) | ![Content browser](docs/images/browser.png) |
+| **HOME** pauses any game under the launcher's menu | **Content browser:** All, Favorites and Recent tabs, with live search. Every emulator gets it from the launcher |
 | ![Game menu](docs/images/game_menu.png) | ![Volume overlay](docs/images/volume.png) |
-| **In-game menu** over the running game | **Volume overlay,** drawn by the launcher for any app |
+| **Emulator menu** over the running game | **Volume overlay,** drawn by the launcher for any app |
 | ![Doom](docs/images/doom.png) | ![Quake](docs/images/quake.png) |
 | **Doom** | **Quake** |
 | ![Duke Nukem 3D](docs/images/duke3d.png) | ![Wi-Fi](docs/images/wifi.png) |
@@ -103,16 +111,21 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 
 **Launcher**
 
-- LVGL home screen with app icons, clock, SD status and settings
+- LVGL home screen with app icons, folders (with their own icons), clock, SD status and settings, laid out
+  for the board's screen size
+- More than one board from one source tree: each board is a package under `boards/`, and apps never change
 - Compositor: an app draws a surface of any size, and the launcher scales and rotates it with the PPA, tear-free
 - Audio engine: up to 8 streams at any rate from 4 to 192 kHz, resampled and mixed
 - Input manager: USB HID gamepads and keyboards for up to 4 players, board buttons and touch
 - Content browser with folders, Favorites, Recent, search, and per-ROM Run/Resume/Restart/Delete save
 - DevLink: a USB protocol to upload, run, log, screenshot, inject input and read crash reports
-- Self-update from the SD card, with automatic rollback if a new version doesn't start
+- Self-update from the SD card or from GitHub Releases (Settings → Update), with automatic rollback if a new
+  version doesn't start. Each board only ever installs its own launcher
 - Controllers: USB HID pads are read from their own report descriptor, Xbox 360-style (XInput) pads and receivers such as 8BitDo's work too, and any pad can be remapped in Settings
-- Wi-Fi and network time through the on-board ESP32-C6 (connecting isn't tested yet, see Known limitations)
-- Battery level in the system bar
+- Wi-Fi and network time through the on-board ESP32-C6
+- Real-time clock on boards that have one: the time survives power-off, and the home screen clock opens a
+  date and time setup
+- Battery level in the system bar, on boards that measure it
 - Wi-Fi file manager: a web page for the SD card, started from the Wi-Fi screen and protected by a PIN
 - Screenshots: Select + Y saves a BMP to `/sd/screenshots`
 - In-game menu: HOME pauses any game for volume, a screenshot or quitting
@@ -136,20 +149,21 @@ The test apps (`hello`, `gfx_demo`, `audio_test`, `input_test`, `thread_test`, `
 
 ## Hardware
 
-Reference board: **Guition ESP32-P4 4.3"**. The launcher also runs on the **Guition JC1060P470C** (7" 1024×600,
-JD9165 panel, real-time clock, `-DLX_BOARD=guition_p4_7`), with the same apps from the same SD card. Adding a board:
+Two boards are supported. Both run the same apps from the same SD card. Adding a board:
 [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md).
 
-| Part | Detail |
-|---|---|
-| SoC | ESP32-P4, dual RISC-V at 360 MHz (this board has chip revision v1.x) |
-| Memory | 32 MB hex PSRAM at 200 MHz, 16 MB flash |
-| Display | 480×800 ST7701 MIPI-DSI panel, used in landscape as 800×480 |
-| Touch | GT911 capacitive |
-| Radio | ESP32-C6 companion over SDIO: Wi-Fi, BLE firmware present |
-| Audio | ES8311 codec, played at a fixed 48 kHz |
-| Storage | microSD |
-| Input | USB host for gamepads and keyboards, optional GPIO button pad |
+| Part | Guition ESP32-P4 4.3" | Guition JC1060P470C 7" |
+|---|---|---|
+| Board id (`-DLX_BOARD=`) | `guition_p4_43` (default) | `guition_p4_7` |
+| SoC | ESP32-P4, dual RISC-V at 360 MHz, chip revision v1.x | same |
+| Memory | 32 MB hex PSRAM at 200 MHz, 16 MB flash | same |
+| Display | 480×800 ST7701 MIPI-DSI, used in landscape as 800×480 | 1024×600 JD9165 MIPI-DSI, landscape |
+| Touch | GT911 capacitive | GT911 capacitive |
+| Radio | ESP32-C6 over SDIO (Wi-Fi; BLE firmware present) | same, newer C6 firmware |
+| Audio | ES8311 codec at a fixed 48 kHz | ES8311 codec at 48 kHz, NS4150 speaker amplifier |
+| Clock | from the network or the PC after each power-on | RX8025T real-time clock |
+| Storage | microSD | microSD |
+| Input | USB host for gamepads and keyboards, optional GPIO button pad, battery pin | USB host for gamepads and keyboards |
 
 ## Getting started
 
@@ -171,11 +185,13 @@ Connect the board's USB-Serial-JTAG port, and use your own COM port below.
 
 ```powershell
 cd launcher
-idf.py -p COM9 build flash
+idf.py -p COM9 build flash                                                    # Guition 4.3" (default board)
+idf.py -B build_guition_p4_7 -DLX_BOARD=guition_p4_7 -p COM10 build flash     # Guition 7"
 cd ..
 ```
 
-Other boards are selected with `idf.py -DLX_BOARD=<id> build`. The default is `guition_p4_43`.
+Each board builds in its own folder. The boards use different versions of the ESP32-C6 driver, so when you
+switch to the other board, add `reconfigure` once: `idf.py -B <folder> -DLX_BOARD=<id> reconfigure build`.
 
 > On Windows, `papp_dev.py` needs the same COM port, so close any serial monitor first. Text logs go to
 > UART0. USB-Serial-JTAG belongs to DevLink.
@@ -202,8 +218,9 @@ directly: anything at `/sd/apps/<dir>/<file>.papp` appears on the home screen.
 
 ### 5. Update the launcher later
 
-Settings → Update downloads the newest GitHub release, or copy a newly built `launcher/build/launcher.bin` to `/sd/update/launcher.bin` and restart. The home screen
-offers the update. A new version has to run for 10 seconds to be kept. If it crashes first, the board returns
+Settings → Update downloads the newest GitHub release for this board, or copy a newly built launcher image
+(`launcher.bin` for the 4.3", `launcher_guition_p4_7.bin` for the 7") to `/sd/update/launcher.bin` and restart.
+The home screen offers the update, and a board refuses another board's image. A new version has to run for 10 seconds to be kept. If it crashes first, the board returns
 to the previous version and says so.
 
 > After flashing with `idf.py flash`, the board boots the factory slot again.
@@ -502,18 +519,19 @@ boards/<id>/sdkconfig.board  PSRAM, flash, CPU and chip revision settings
 ```
 
 The contract in [components/bsp/include/bsp.h](components/bsp/include/bsp.h) covers board information and
-capabilities, SD card, display (at least two framebuffers), touch, audio at one fixed rate, and buttons.
+capabilities, SD card, display (at least two framebuffers), touch, audio at one fixed rate, buttons, battery and
+real-time clock.
 Declare your panel's rotation and the compositor and touch code adapt. Copy
 [boards/guition_p4_43](boards/guition_p4_43) as a start, then build with `idf.py -DLX_BOARD=<id> build`.
 
-Existing `.papp` files are designed to run unchanged. Only one board exists so far, so this hasn't yet been
-proven on a second one.
+Existing `.papp` files run unchanged: the second board, the Guition 7", runs the same SD card with no app
+rebuilt. [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md) is the checklist from that port.
 
 ## Repository layout
 
 ```
 launcher/              ESP-IDF project: main.c + home.c (LVGL home screen)
-boards/<id>/           board packages
+boards/<id>/           board packages: guition_p4_43 (4.3"), guition_p4_7 (7")
 components/
   bsp/                 BSP contract (bsp.h)
   papp_abi/            .papp format and interface definitions
@@ -525,6 +543,9 @@ components/
   lx_gfx/              software drawing and font for launcher screens
   lx_devlink/          DevLink protocol
   lx_common/           CRC32, launcher version
+  lx_net/              Wi-Fi, NTP and time zone through the ESP32-C6
+  lx_update/           self-update from the SD card and GitHub Releases
+  lx_web/              Wi-Fi file manager
 papp-sdk/
   include/papp/        public API
   runtime/             crt0, libc glue, interface stubs
@@ -533,10 +554,12 @@ papp-sdk/
 apps/                  emulators, games and test apps
   common/odroid/       RetroESP32 compatibility layer
   common/v1compat/     PAPP v1 compatibility layer
-  common/icons/        emulator icons
+  common/icons/        emulator and folder icons
 tools/papp_dev.py      DevLink host tool
+tools/make_release.py  release files for Settings → Update, every board
 tests/host/            relocation test
-docs/                  design, plan, test checklist
+tests/board/smoke.py   board regression run
+docs/                  design, plan, test checklist, porting guide
 ```
 
 Further reading:
@@ -545,6 +568,7 @@ Further reading:
   proposal, so the code and `papp_abi.h` win where they differ.
 - [docs/WORKPLAN.md](docs/WORKPLAN.md): status and roadmap
 - [docs/TESTING.md](docs/TESTING.md): test checklist and results per app
+- [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md): adding a board
 
 ## Known limitations
 
