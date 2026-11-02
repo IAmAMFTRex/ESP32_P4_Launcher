@@ -547,7 +547,7 @@ Further reading:
   FAST region needs it. Teardown protects against leaks, not against a malicious app.
 - **The ABI is a preview,** and may change before 1.0.
 - **PPA scaling steps are 1/16,** so stretched output can leave a few pixels unused.
-- **Online update and NTP are untested against the real internet,** and no release is published yet.
+- **NTP is untested against the real internet.** Online update works from GitHub Releases (tested 0.19.0 to 0.19.1).
 - **The Wi-Fi file manager page is untested** from a phone or PC.
 - **Xbox-style (XInput) pads aren't supported yet,** and non-Sony HID pads are only tested with sample descriptors.
 - **Battery percentage isn't calibrated** against a real discharge curve.

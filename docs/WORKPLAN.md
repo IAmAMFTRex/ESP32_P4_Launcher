@@ -115,7 +115,7 @@ the clock is lost at power-off, so check whether the board has an RTC.
 |---|---|---|---|
 | D1 | Update from SD: **done, 0.13** | — | `/sd/update/launcher.bin` is offered at boot. Good image tested, survives a reboot. Must be built after this feature, as the version is in the image |
 | D2 | App rollback safety: **done, 0.13** | — | Confirmed after 10 s. A build crashing at boot returned to the previous version by itself and the failure was shown once |
-| D3 | OTA from GitHub Releases: **client done, 0.19** | — | Settings → Update reads `latest.json` from the newest release, downloads to the SD card, checks SHA-256 and installs with rollback. Tested over loopback, including a wrong hash. **Real HTTPS to GitHub is untested** (no internet on this network), and no release is published. `/sd/update/ota_url.txt` overrides the address |
+| D3 | OTA from GitHub Releases: **done, 0.19.1** | — | Settings → Update reads `latest.json` from the newest release, downloads to the SD card, checks SHA-256 and installs with rollback. Tested on the board from GitHub: 0.19.0 to 0.19.1, twice. `tools/make_release.py` makes the release files. `/sd/update/ota_url.txt` overrides the address |
 | D4 | CI release builds | M | GitHub Actions builds the launcher and apps, then publishes a release |
 | D5 | Signed updates | M | Verify a signature, not just a hash. Do it before promoting OTA widely |
 | D6 | App updates / catalog | M | Same manifest also lists `.papp` files. Respect each core's license when publishing binaries |

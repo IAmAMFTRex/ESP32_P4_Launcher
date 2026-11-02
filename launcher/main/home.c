@@ -126,6 +126,11 @@ static void focus_set(lv_obj_t *o)
     s_focused = o;
     if (o) {
         lv_obj_add_state(o, LV_STATE_FOCUSED);
+        if (!lv_obj_get_style_outline_width(o, LV_PART_MAIN)) {    /* message box buttons have no ring of their own */
+            lv_obj_set_style_outline_width(o, 3, LV_STATE_FOCUSED);
+            lv_obj_set_style_outline_color(o, C_ACCENT, LV_STATE_FOCUSED);
+            lv_obj_set_style_outline_pad(o, 3, LV_STATE_FOCUSED);
+        }
         lv_obj_scroll_to_view_recursive(o, LV_ANIM_ON);
     }
 }
@@ -1469,10 +1474,17 @@ static void on_upd_later(lv_event_t *ev)
     upd_close();
 }
 
+static void upd_box(const char *text, bool ask);
+
 static void on_upd_install(lv_event_t *ev)
 {
-    if (s_upd_online) lx_update_online_download();
-    else s_upd_go = true;
+    if (s_upd_online) {
+        upd_close();                            /* no buttons while it downloads */
+        upd_box("Downloading...", false);
+        lx_update_online_download();
+    } else {
+        s_upd_go = true;
+    }
 }
 
 static void upd_progress(int percent)
