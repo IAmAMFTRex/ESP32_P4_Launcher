@@ -5,8 +5,8 @@ The launcher core never touches hardware directly: it goes through the BSP contr
 change: they ask for the display size, draw into their own surface, and the compositor scales and
 rotates it onto the panel. The same SD card runs on every board.
 
-Written from the second port, the Guition JC1060P470C (7" 1024x600, `boards/guition_p4_7`), done
-from the Guition 4.3" (`boards/guition_p4_43`) in an afternoon.
+Written from the second and third ports, the Guition JC1060P470C (7" 1024x600, `boards/guition_p4_7`)
+and the M5Stack Tab5 (720x1280, `boards/m5stack_tab5`), each done in an afternoon.
 
 ## 1. The board package
 
@@ -43,12 +43,19 @@ Start by copying the closest existing board. What each function must do is writt
    range (800x480 on the 7" board), so scale from that, not from the panel size. On the 7" board an
    I2C probe right after the panel reset upsets the GT911: talk to its addresses directly.
 5. **Audio.** One fixed rate (48 kHz). The launcher's mixer resamples every app stream to it.
-6. **Wi-Fi companion.** `esp_hosted` must match the firmware on the board's ESP32-C6, so its version is
-   pinned in the board's `idf_component.yml` (2.0 on the 4.3", 2.12 on the 7" whose C6 reports 2.3).
-   `lx_net` only asks for `esp_wifi_remote` without a version.
-7. **Real-time clock.** `bsp_rtc_get/set` in UTC. The launcher sets the system time from it at boot,
+6. **Wi-Fi companion.** `esp_hosted` must suit the firmware on the board's ESP32-C6, so its version is
+   pinned in the board's `idf_component.yml`: 2.0 on the 4.3", 2.12 on the 7" (its C6 reports 2.3), and
+   1.4 with `esp_wifi_remote` 0.8.5 on the Tab5, as in M5Stack's demo (2.12 never got past SDIO card
+   init there). `lx_net` only asks for `esp_wifi_remote` without a version. SDIO pins other than the
+   P4 slot 1 defaults are set in `sdkconfig.board`; check the build log line `sdio_wrapper: GPIOs: ...`,
+   since a setting with the wrong name for that esp_hosted version is silently ignored (on 1.4, D1 is
+   `ESP_HOSTED_SDIO_PRIV_PIN_D1_4BIT_BUS`).
+7. **Power rails.** Some boards switch the display reset, speaker, USB 5 V and C6 power through I2C
+   I/O expanders (the Tab5 has two PI4IOE5V6408). Set them up first thing in `bsp_init`, copying the
+   vendor's order and values.
+8. **Real-time clock.** `bsp_rtc_get/set` in UTC. The launcher sets the system time from it at boot,
    and saves NTP time to it (and DevLink time when a time zone is set, which makes that real UTC).
-8. **Capabilities.** Set `BSP_CAP_*` as each device comes up, so the launcher hides what is missing
+9. **Capabilities.** Set `BSP_CAP_*` as each device comes up, so the launcher hides what is missing
    (no battery: the system bar and Settings leave it out).
 
 ## 3. Build and flash
@@ -69,6 +76,7 @@ another board's launcher, from the SD card or online.
 ## 4. Test
 
 1. `python tools/papp_dev.py --port COMxx info` shows the board id, display size and capabilities.
+   `bootlog` shows everything logged before DevLink came up: the place to look when a device doesn't start.
 2. `shot` screenshots the home screen: check the layout uses the whole display.
 3. Put the SD card from another board in, unchanged. Run apps of each kind: an emulator (NES), a v1
    game (Doom, Quake), an LVGL app (Clock). HOME must open the in-game menu.
@@ -93,3 +101,9 @@ it yet.
 | Audio | ES8311, amplifier on GPIO 11 | ES8311, NS4150 amplifier on GPIO 20 |
 | C6 firmware | esp_hosted 2.0.17 | esp_hosted 2.3.0 (host 2.12 works, with a version warning) |
 | Extras | battery pin, GPIO pad add-on | RX8025T real-time clock (keeps UTC; set from NTP) |
+
+The M5Stack Tab5: 720x1280 ILI9881C portrait panel (`display_rot` 90; units with the ST7123 panel,
+recognised by touch at 0x55, are refused for now: that panel wants 24-bit pixels), GT911 touch, ES8388
+codec, RX8130 RTC, two PI4IOE5V6408 expanders (0x43: speaker amp, LCD reset; 0x44: C6 power, USB 5 V,
+charging), C6 on SDIO CLK 12, CMD 13, D0-D3 11/10/9/8, reset 15. Its 2-cell battery (INA226 at 0x41)
+isn't reported yet.

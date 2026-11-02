@@ -14,6 +14,8 @@ extern "C" {
 
 /* Installs the USB-Serial-JTAG driver, hooks ESP_LOG output and starts the
  * command task. Call after the SD card is mounted and lx_app_init(). */
+/* First thing in app_main: keep the boot log for DL_BOOTLOG */
+void lx_devlink_early_init(void);
 esp_err_t lx_devlink_start(void);
 
 /* Log sink for app output (pass to lx_app_init). */

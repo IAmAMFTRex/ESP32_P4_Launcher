@@ -11,7 +11,8 @@ Design: `docs/ARCHITECTURE.md`. Plan + status: `docs/WORKPLAN.md`.
 ```
 launcher/                 ESP-IDF project (factory app; main.c + home.c = LVGL home screen + app folders). Board: -DLX_BOARD=<id> (default guition_p4_43)
 boards/<id>/board/        BSP implementation (component "board", pins esp_hosted for its C6); boards/<id>/sdkconfig.board.
-                          guition_p4_43 (4.3" 480x800, image "launcher"), guition_p4_7 (7" 1024x600, image "launcher_guition_p4_7")
+                          guition_p4_43 (4.3" 480x800, image "launcher"), guition_p4_7 (7" 1024x600), m5stack_tab5 (720x1280,
+                          power rails on two PI4IOE5V6408 I2C expanders, esp_hosted 1.4 for M5Stack's C6 firmware)
 components/bsp/           BSP contract (bsp.h) — the core only talks to hardware through it
 components/papp_abi/      papp_abi.h — .papp v2 format + interfaces (shared with apps; no IDF includes)
 components/lx_loader/     App Manager: loader, relocation, imports, services (SYS/MEM/FS/DISP/AUDI/INPT/THRD/UI), teardown
@@ -58,7 +59,9 @@ tests/board/smoke.py      Board regression: relocation test, test apps, crash re
 - Boards (both chip rev v1.x, `CONFIG_ESP32P4_SELECTS_REV_LESS_V3`); USB-Serial-JTAG belongs to DevLink, UART0 is the text console:
   Guition 4.3" `guition_p4_43` on **COM9** (build in `launcher/build`), Guition 7" JC1060P470C `guition_p4_7` on **COM10**
   (`idf.py -B build_guition_p4_7 -DLX_BOARD=guition_p4_7 -p COM10 build flash`). Porting: `docs/PORTING_GUIDE.md`.
-  `managed_components/` is shared and esp_hosted differs per board: after building the other board, add `reconfigure`.
+  M5Stack Tab5 `m5stack_tab5` on **COM15** (`-B build_m5stack_tab5`; image "launcher_m5stack_tab5").
+  `managed_components/` is shared and esp_hosted differs per board: after building another board, add `reconfigure`.
+  `papp_dev.py bootlog` shows what the board logged before DevLink came up (bring-up of a new board).
 
 ## Dev loop (works without touching the board)
 

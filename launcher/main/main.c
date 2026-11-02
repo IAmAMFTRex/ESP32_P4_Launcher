@@ -81,6 +81,7 @@ static void sd_retry_task(void *arg)
 
 void app_main(void)
 {
+    lx_devlink_early_init();
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();

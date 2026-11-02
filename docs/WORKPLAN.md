@@ -412,6 +412,12 @@ project name carries the board, so updates (SD and online) never cross boards; `
 per-board section. `docs/PORTING_GUIDE.md` written. The 7" board's RX8025T RTC keeps the time across power-off (`bsp_rtc_*`, set from NTP); on boards with an RTC, the home screen clock opens a date and time setup (time zone, fields, sync from internet). Not done: the conformance app,
 the V2 panel table, and touch and sound checked by hand.
 
+**Third board, M5Stack Tab5 (`boards/m5stack_tab5`):** ILI9881C 720x1280 panel used in landscape,
+GT911, ES8388, RX8130 RTC, power rails on two I2C expanders, C6 with esp_hosted 1.4 (M5Stack's C6
+firmware). Same SD card: NES, Doom, Wi-Fi scan and `smoke.py` pass. Added on the way: `papp_dev.py
+bootlog` (log kept from boot). Orientation, touch and sound checked by hand. Not done: the ST7123
+panel variant and the battery (2 cells via INA226).
+
 Pick a board that is **meaningfully different** from the reference to stress the abstraction — e.g.
 a 7″ 1024×600 landscape P4 board (Espressif ESP32-P4-Function-EV-Board or a Waveshare ESP32-P4
 board), different codec, no GPIO pad (USB-only input).

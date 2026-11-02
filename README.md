@@ -10,13 +10,14 @@ There's no reflashing, no reboot and no flash wear. When it exits, every resourc
 Duke Nukem 3D and OpenTyrian, plus Clock and Files.
 
 The same launcher runs on more than one board, and the same `.papp` files and SD card work on all of them:
-today the Guition ESP32-P4 4.3" (800×480) and the Guition JC1060P470C 7" (1024×600).
+today the Guition ESP32-P4 4.3" (800×480), the Guition JC1060P470C 7" (1024×600) and the
+M5Stack Tab5 (1280×720).
 
 ![Home screen: the Emulators folder on the 7-inch board](docs/images/home.png)
 
 | Launcher version | App ABI | Toolchain | Boards |
 |---|---|---|---|
-| 0.21.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600) |
+| 0.21.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600), M5Stack Tab5 (720×1280) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -149,21 +150,21 @@ The test apps (`hello`, `gfx_demo`, `audio_test`, `input_test`, `thread_test`, `
 
 ## Hardware
 
-Two boards are supported. Both run the same apps from the same SD card. Adding a board:
+Three boards are supported. All run the same apps from the same SD card. Adding a board:
 [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md).
 
-| Part | Guition ESP32-P4 4.3" | Guition JC1060P470C 7" |
-|---|---|---|
-| Board id (`-DLX_BOARD=`) | `guition_p4_43` (default) | `guition_p4_7` |
-| SoC | ESP32-P4, dual RISC-V at 360 MHz, chip revision v1.x | same |
-| Memory | 32 MB hex PSRAM at 200 MHz, 16 MB flash | same |
-| Display | 480×800 ST7701 MIPI-DSI, used in landscape as 800×480 | 1024×600 JD9165 MIPI-DSI, landscape |
-| Touch | GT911 capacitive | GT911 capacitive |
-| Radio | ESP32-C6 over SDIO (Wi-Fi; BLE firmware present) | same, newer C6 firmware |
-| Audio | ES8311 codec at a fixed 48 kHz | ES8311 codec at 48 kHz, NS4150 speaker amplifier |
-| Clock | from the network or the PC after each power-on | RX8025T real-time clock |
-| Storage | microSD | microSD |
-| Input | USB host for gamepads and keyboards, optional GPIO button pad, battery pin | USB host for gamepads and keyboards |
+| Part | Guition ESP32-P4 4.3" | Guition JC1060P470C 7" | M5Stack Tab5 |
+|---|---|---|---|
+| Board id (`-DLX_BOARD=`) | `guition_p4_43` (default) | `guition_p4_7` | `m5stack_tab5` |
+| SoC | ESP32-P4, dual RISC-V at 360 MHz, chip revision v1.x | same | same |
+| Memory | 32 MB hex PSRAM at 200 MHz, 16 MB flash | same | same |
+| Display | 480×800 ST7701 MIPI-DSI, used in landscape as 800×480 | 1024×600 JD9165 MIPI-DSI, landscape | 720×1280 ILI9881C MIPI-DSI, used in landscape as 1280×720 |
+| Touch | GT911 capacitive | GT911 capacitive | GT911 capacitive |
+| Radio | ESP32-C6 over SDIO (Wi-Fi; BLE firmware present) | same, newer C6 firmware | ESP32-C6 over SDIO, M5Stack's C6 firmware |
+| Audio | ES8311 codec at a fixed 48 kHz | ES8311 codec at 48 kHz, NS4150 speaker amplifier | ES8388 codec at 48 kHz |
+| Clock | from the network or the PC after each power-on | RX8025T real-time clock | RX8130 real-time clock |
+| Storage | microSD | microSD | microSD |
+| Input | USB host for gamepads and keyboards, optional GPIO button pad, battery pin | USB host for gamepads and keyboards | USB host for gamepads and keyboards |
 
 ## Getting started
 
@@ -187,6 +188,7 @@ Connect the board's USB-Serial-JTAG port, and use your own COM port below.
 cd launcher
 idf.py -p COM9 build flash                                                    # Guition 4.3" (default board)
 idf.py -B build_guition_p4_7 -DLX_BOARD=guition_p4_7 -p COM10 build flash     # Guition 7"
+idf.py -B build_m5stack_tab5 -DLX_BOARD=m5stack_tab5 -p COM15 build flash     # M5Stack Tab5
 cd ..
 ```
 
@@ -219,7 +221,7 @@ directly: anything at `/sd/apps/<dir>/<file>.papp` appears on the home screen.
 ### 5. Update the launcher later
 
 Settings → Update downloads the newest GitHub release for this board, or copy a newly built launcher image
-(`launcher.bin` for the 4.3", `launcher_guition_p4_7.bin` for the 7") to `/sd/update/launcher.bin` and restart.
+(`launcher.bin` for the 4.3", `launcher_<board id>.bin` for the others) to `/sd/update/launcher.bin` and restart.
 The home screen offers the update, and a board refuses another board's image. A new version has to run for 10 seconds to be kept. If it crashes first, the board returns
 to the previous version and says so.
 
@@ -524,14 +526,14 @@ real-time clock.
 Declare your panel's rotation and the compositor and touch code adapt. Copy
 [boards/guition_p4_43](boards/guition_p4_43) as a start, then build with `idf.py -DLX_BOARD=<id> build`.
 
-Existing `.papp` files run unchanged: the second board, the Guition 7", runs the same SD card with no app
+Existing `.papp` files run unchanged: the Guition 7" and the M5Stack Tab5 run the same SD card with no app
 rebuilt. [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md) is the checklist from that port.
 
 ## Repository layout
 
 ```
 launcher/              ESP-IDF project: main.c + home.c (LVGL home screen)
-boards/<id>/           board packages: guition_p4_43 (4.3"), guition_p4_7 (7")
+boards/<id>/           board packages: guition_p4_43 (4.3"), guition_p4_7 (7"), m5stack_tab5
 components/
   bsp/                 BSP contract (bsp.h)
   papp_abi/            .papp format and interface definitions

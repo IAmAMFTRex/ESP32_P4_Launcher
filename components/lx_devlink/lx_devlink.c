@@ -109,6 +109,34 @@ static void reply_err(uint8_t req, uint16_t seq, const char *fmt, ...)
     dl_send(req | 0x80, DL_F_ERROR, seq, msg, strlen(msg), portMAX_DELAY);
 }
 
+/* ── Boot log ───────────────────────────────────────────────────────────────
+ * Messages from before DevLink is up (board bring-up) are otherwise lost on
+ * boards whose UART console isn't wired out. The first BOOTLOG_SIZE bytes of
+ * the log are kept and returned by DL_BOOTLOG. */
+
+#define BOOTLOG_SIZE (24 * 1024)
+static char *s_boot;
+static size_t s_boot_len;
+static vprintf_like_t s_boot_next;
+
+static int boot_vprintf(const char *fmt, va_list ap)
+{
+    if (s_boot && s_boot_len < BOOTLOG_SIZE - 1) {
+        va_list ap2;
+        va_copy(ap2, ap);
+        int n = vsnprintf(s_boot + s_boot_len, BOOTLOG_SIZE - s_boot_len, fmt, ap2);
+        va_end(ap2);
+        if (n > 0) s_boot_len = s_boot_len + n < BOOTLOG_SIZE - 1 ? s_boot_len + n : BOOTLOG_SIZE - 1;
+    }
+    return s_boot_next(fmt, ap);
+}
+
+void lx_devlink_early_init(void)
+{
+    s_boot = heap_caps_malloc(BOOTLOG_SIZE, MALLOC_CAP_SPIRAM);
+    if (s_boot) s_boot_next = esp_log_set_vprintf(boot_vprintf);
+}
+
 /* ── Log forwarding ─────────────────────────────────────────────────────── */
 
 static int dl_vprintf(const char *fmt, va_list ap)
@@ -559,6 +587,7 @@ static void dispatch(uint8_t type, uint16_t seq, uint8_t *p, uint32_t len)
         esp_restart();
         break;
     case DL_CRASH: h_crash(seq); break;
+    case DL_BOOTLOG: reply(type, seq, s_boot, s_boot ? s_boot_len : 0); break;
     case DL_SHOT: h_shot(seq, p, len); break;
     case DL_INPUT: h_input(seq, p, len); break;
     case DL_NET: {

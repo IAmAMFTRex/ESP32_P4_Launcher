@@ -48,7 +48,7 @@ PING, INFO, TIME = 0x01, 0x02, 0x03
 LS, STAT, MKDIR, RM, RENAME = 0x10, 0x11, 0x12, 0x13, 0x14
 PUT_BEGIN, PUT_DATA, PUT_END, GET = 0x20, 0x21, 0x22, 0x28
 RUN, STOP, STATUS = 0x30, 0x31, 0x32
-REBOOT, CRASH, CRASH_CLEAR = 0x40, 0x41, 0x42
+REBOOT, CRASH, CRASH_CLEAR, BOOTLOG = 0x40, 0x41, 0x42, 0x43
 NET = 0x52
 SHOT, INPUT = 0x50, 0x51
 INPUT_PAD, INPUT_KEY, INPUT_STATE, INPUT_UNMAP = 1, 2, 3, 4
@@ -480,6 +480,7 @@ def main():
     sub.add_parser("status")
     p = sub.add_parser("crash"); p.add_argument("--elf", help="app ELF to symbolize the crash with")
     sub.add_parser("crash-clear")
+    sub.add_parser("bootlog", help="messages logged while the board was starting")
     sub.add_parser("reboot")
     p = sub.add_parser("shot"); p.add_argument("out", nargs="?", default="screenshot.png")
     p = sub.add_parser("log"); p.add_argument("--seconds", type=float, default=0)
@@ -583,6 +584,8 @@ def main():
                 print(f"player {args.player + 1}: default buttons")
             else:
                 send_input(dl, args.what, args.value, args.player, args.hold)
+        elif c == "bootlog":
+            print(dl.request(BOOTLOG).decode("utf-8", "replace"))
         elif c == "reboot":
             print(dl.request(REBOOT).decode())
         elif c == "log":

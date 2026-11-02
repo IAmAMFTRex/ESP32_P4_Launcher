@@ -37,6 +37,7 @@ enum {
     DL_REBOOT      = 0x40,
     DL_CRASH       = 0x41,   /*                               -> JSON            */
     DL_CRASH_CLEAR = 0x42,
+    DL_BOOTLOG     = 0x43,   /*                               -> text logged during boot */
     DL_SHOT        = 0x50,   /* u32 offset, u32 max          -> dl_shot_hdr_t + bytes */
     DL_NET         = 0x52,   /* [mode: start] -> busy flag + text of the network test */
     DL_INPUT       = 0x51,   /* dl_input_* request; STATE      -> JSON            */

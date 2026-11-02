@@ -1,0 +1,8 @@
+dependencies:
+  idf: ">=5.5"
+  espressif/esp_codec_dev: "~1.5.4"
+  espressif/esp_lcd_ili9881c: "^1.0.1"
+  # Wi-Fi companion: ESP32-C6 on SDIO (pins in sdkconfig.board). The versions M5Stack's
+  # Tab5 demo uses, to match the C6 firmware the board ships with
+  espressif/esp_wifi_remote: "0.8.5"
+  espressif/esp_hosted: "1.4.0"

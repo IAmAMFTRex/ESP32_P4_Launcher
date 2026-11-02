@@ -14,6 +14,7 @@ static const char *TAG = "rtc";
 #define REG_FLAG      0x0E
 #define FLAG_VLF      0x02          /* oscillator stopped / battery lost: the time is garbage */
 #define VALID_EPOCH   1704067200    /* 2024-01-01: anything earlier is an unset clock */
+#define LAST_EPOCH    4102444800    /* 2100-01-01: anything later is a misread one */
 
 static i2c_master_dev_handle_t s_rtc;
 
@@ -73,7 +74,7 @@ esp_err_t bsp_rtc_get(int64_t *utc)
     bool sane = !(flag & FLAG_VLF) && t.tm_mon >= 0 && t.tm_mon < 12 && t.tm_mday >= 1 && t.tm_mday <= 31 &&
                 t.tm_hour < 24 && t.tm_min < 60 && t.tm_sec < 60;
     int64_t epoch = sane ? utc_to_epoch(&t) : 0;
-    if (epoch < VALID_EPOCH) return ESP_ERR_INVALID_STATE;
+    if (epoch < VALID_EPOCH || epoch >= LAST_EPOCH) return ESP_ERR_INVALID_STATE;
     *utc = epoch;
     return ESP_OK;
 }

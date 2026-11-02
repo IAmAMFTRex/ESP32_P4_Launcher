@@ -976,6 +976,8 @@ static void build_wifi_screens(void)
     lv_obj_t *kb = lv_keyboard_create(s_pw_scr);
     lv_obj_set_size(kb, 800 + s_dx, 360);
     lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_text_font(kb, &lv_font_montserrat_28, LV_PART_ITEMS);    /* the default is tiny on keys this big */
+    lv_obj_set_style_text_font(s_pw_text, &lv_font_montserrat_24, 0);
     lv_keyboard_set_textarea(kb, s_pw_text);
     lv_obj_add_event_cb(kb, on_pw_key, LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(kb, on_pw_key, LV_EVENT_CANCEL, NULL);
