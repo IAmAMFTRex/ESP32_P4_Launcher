@@ -25,7 +25,7 @@
         y = (spr->y & 1023) - 64;
         x = (spr->x & 1023) - 32;
 
-        no = spr->no & 2047;
+        no = spr->no & 1023;     /* 64 KB VRAM holds 512 patterns; the VDC wraps (2047 overran vchanges/VRAMS) */
         // 4095 is for supergraphx only
         // no = (unsigned int)(spr->no & 4095);
 

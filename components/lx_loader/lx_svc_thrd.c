@@ -117,6 +117,17 @@ static TickType_t ticks(uint32_t ms)
 
 /* ── Threads ────────────────────────────────────────────────────────────── */
 
+/* vTaskSuspend/vTaskDelete of a task running on the other core only ask that
+ * core to switch: the task runs on for a moment, and a delete is finished
+ * later by that core's idle task, which still uses the TCB we free. */
+void lx_task_wait_off_cpu(void *task)
+{
+    for (int n = 0; eTaskGetState((TaskHandle_t)task) == eRunning; n++) {
+        if (n < 200) esp_rom_delay_us(5);
+        else vTaskDelay(1);
+    }
+}
+
 static int self_slot(void)
 {
     TaskHandle_t me = xTaskGetCurrentTaskHandle();
@@ -215,10 +226,7 @@ static bool thrd_join(papp_thread_t *t, uint32_t timeout_ms, int *exit_code)
     /* finish() has given `done` and holds no lock, so the task can go as soon
      * as it is off the CPU (ready, parked or preempted on our core). If it is
      * still running on the other core it is a few us from parking. */
-    for (int n = 0; eTaskGetState(t->task) == eRunning; n++) {
-        if (n < 200) esp_rom_delay_us(5);
-        else vTaskDelay(1);
-    }
+    lx_task_wait_off_cpu(t->task);
     vTaskDelete(t->task);
     if (exit_code) *exit_code = t->code;
     thread_free(t);
@@ -391,9 +399,15 @@ void lx_thrd_suspend_all(bool suspend)
         if (suspend) vTaskSuspend(h);
         else vTaskResume(h);
     }
+    if (!suspend) return;
+    for (int i = 0; i < PAPP_MAX_THREADS; i++) {
+        TaskHandle_t h = s_tasks[i];
+        if (h) lx_task_wait_off_cpu(h);
+    }
 }
 
-/* All threads are suspended and none is inside a service call. */
+/* All threads are suspended, off the CPU and none is inside a service call,
+ * so vTaskDelete is done with each TCB when it returns. */
 int lx_thrd_kill_all(void)
 {
     int n = 0;

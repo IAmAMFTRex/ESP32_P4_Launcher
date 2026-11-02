@@ -137,12 +137,16 @@
         case 3:
             switch (io.vdc_reg) {
             case VWR:           /* Write to mem */
-                /* Writing to hi byte actually perform the action */
-                VRAM[IO_VDC_00_MAWR.W * 2] = io.vdc_ratch;
-                VRAM[IO_VDC_00_MAWR.W * 2 + 1] = V;
+                /* Writing to hi byte actually perform the action.
+                   VRAM is 32K words: the VDC drops writes above it (they
+                   used to land past the VRAM buffer, in other heap blocks) */
+                if (IO_VDC_00_MAWR.W < VRAMSIZE / 2) {
+                    VRAM[IO_VDC_00_MAWR.W * 2] = io.vdc_ratch;
+                    VRAM[IO_VDC_00_MAWR.W * 2 + 1] = V;
 
-                vchange[IO_VDC_00_MAWR.W / 16] = 1;
-                vchanges[IO_VDC_00_MAWR.W / 64] = 1;
+                    vchange[IO_VDC_00_MAWR.W / 16] = 1;
+                    vchanges[IO_VDC_00_MAWR.W / 64] = 1;
+                }
 
                 IO_VDC_00_MAWR.W += io.vdc_inc;
 
@@ -185,7 +189,10 @@
                     int i;
 
                     for (i = 0; i < (IO_VDC_12_LENR.W + 1) * 2; i++) {
-                        *(VRAM + dest) = *(VRAM + source);
+                        /* 16-bit word addresses wrap; only the 32K words of VRAM exist */
+                        int s = source & 0x1FFFF, d = dest & 0x1FFFF;
+                        if (d < VRAMSIZE)
+                            VRAM[d] = s < VRAMSIZE ? VRAM[s] : 0;
                         dest += destcount;
                         source += sourcecount;
                     }

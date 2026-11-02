@@ -35,7 +35,8 @@ extern const papp_if_ui_t lx_if_ui;
 
 /* THRD bookkeeping (lx_svc_thrd.c), driven by the App Manager */
 void lx_thrd_begin_run(void *main_task);
-void lx_thrd_suspend_all(bool suspend);    /* app threads only, not the main task */
+void lx_thrd_suspend_all(bool suspend);    /* app threads only, not the main task; suspend waits until off the CPU */
+void lx_task_wait_off_cpu(void *task);     /* spin until a (suspended) task has left the CPU */
 int  lx_thrd_kill_all(void);               /* -> threads that were still alive */
 int  lx_thrd_end_run(void);                /* -> sync objects freed */
 

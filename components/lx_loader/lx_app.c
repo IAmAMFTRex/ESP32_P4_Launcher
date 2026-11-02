@@ -430,13 +430,16 @@ esp_err_t lx_app_launch(const char *path, int argc, const char *const *argv,
 /* ── Teardown (App Manager task) ────────────────────────────────────────── */
 
 /* Delete the app's tasks (main + threads), but never while one of them is
- * inside a service call (it might hold the heap or VFS lock). Returns false
- * if they could not be stopped. */
+ * inside a service call (it might hold the heap or VFS lock) or still on the
+ * other core's CPU (the busy count could still change, and the kernel would
+ * finish the delete after we free the TCB and stack). Returns false if they
+ * could not be stopped. */
 static bool kill_app_tasks(app_t *a, int *threads)
 {
     for (int tries = 0; tries < 400; tries++) {
         vTaskSuspend(a->task);
         lx_thrd_suspend_all(true);
+        lx_task_wait_off_cpu(a->task);
         if (lx_svc_busy() == 0) {
             *threads = lx_thrd_kill_all();
             vTaskDelete(a->task);
@@ -459,7 +462,6 @@ static void teardown(int code, bool forced)
         esp_restart();
     }
     if (threads) ESP_LOGW(TAG, "stopped %d app thread(s) still running at exit", threads);
-    vTaskDelay(pdMS_TO_TICKS(2));   /* let the kernel finish with the static TCB */
 
     uint32_t na, nb, nf;
     lx_svc_end_run(&na, &nb, &nf);
