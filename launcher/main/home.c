@@ -1324,7 +1324,7 @@ static void store_rows(void)
         lv_obj_remove_state(s_focused, LV_STATE_FOCUSED);
     }
     lv_obj_clean(s_store_list);
-    int updates = 0;
+    int updates = 0, missing = 0;
     for (int i = 0; i < lx_appstore_count(); i++) {
         const lx_appstore_app_t *a = lx_appstore_app(i);
         char right[64];
@@ -1337,6 +1337,7 @@ static void store_rows(void)
         } else if (!s_store_inst[i].path[0]) {
             snprintf(right, sizeof(right), "Get  %s", a->version);
             col = C_GREEN;
+            missing++;
         } else if (store_has_update(i)) {
             snprintf(right, sizeof(right), "Update  %s " LV_SYMBOL_RIGHT " %s", s_store_inst[i].version, a->version);
             col = C_ACCENT;
@@ -1365,7 +1366,9 @@ static void store_rows(void)
         lv_obj_add_event_cb(b, on_store_pick, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
     char buf[32];
-    snprintf(buf, sizeof(buf), updates ? "Update all (%d)" : "Update all", updates);
+    if (updates) snprintf(buf, sizeof(buf), "Update all (%d)", updates);
+    else if (missing) snprintf(buf, sizeof(buf), "Install all (%d)", missing);   /* e.g. a new card */
+    else snprintf(buf, sizeof(buf), "Update all");
     lv_label_set_text(lv_obj_get_child(s_store_all, 0), buf);
     if (!here) return;
     focus_clear_list();
@@ -1431,12 +1434,17 @@ static void on_store_pick(lv_event_t *ev)
 
 static void on_store_all(lv_event_t *ev)
 {
+    /* Updates when there are any, otherwise every app not on the card (as the button says) */
+    bool any_update = false;
+    for (int i = 0; i < lx_appstore_count(); i++) any_update |= store_has_update(i);
     int n = 0;
-    for (int i = 0; i < lx_appstore_count(); i++)
-        if (store_has_update(i) && i != s_store_doing && !store_queued(i)) {
+    for (int i = 0; i < lx_appstore_count(); i++) {
+        bool want = any_update ? store_has_update(i) : !s_store_inst[i].path[0];
+        if (want && i != s_store_doing && !store_queued(i)) {
             store_add(i);
             n++;
         }
+    }
     if (!n && s_store_doing < 0) lv_label_set_text(s_store_status, "All installed apps are up to date.");
     store_rows();
 }

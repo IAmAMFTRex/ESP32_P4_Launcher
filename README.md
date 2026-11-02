@@ -214,6 +214,12 @@ Output goes to `build/apps/<name>/<name>.papp`, next to the `.elf` and `.map`.
 
 ### 4. Install an app
 
+Without building anything: connect to Wi-Fi in Settings, open Settings → Apps and choose **Install all**. Every
+published app downloads into its folder (Emulators, Games). Then add ROMs and game data, see
+[Preparing the SD card](#preparing-the-sd-card).
+
+To install an app you built yourself:
+
 ```powershell
 python tools/papp_dev.py --port COM9 deploy build/apps/doom/doom.papp --timeout 20
 ```
@@ -253,6 +259,18 @@ A folder can have its own icon: put an `icon.png` (best 88x88) in its directory,
 ```
 
 No ROMs or game data are included. You need to supply your own legally obtained files.
+
+The apps themselves come from Settings → Apps (on Wi-Fi), so a new card needs only the data. The four game
+ports need these files; the freeware and shareware versions work:
+
+| Game | Copy | Freely available version |
+|---|---|---|
+| Doom | one IWAD to `/sd/roms/doom/`: `doom.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`, `doom1.wad` or `freedoom.wad` (the first one found, in that order). Create `/sd/saves/doom` for saves | `doom1.wad` from the Doom shareware release, or [Freedoom](https://freedoom.github.io/) (rename `freedoom1.wad` to `freedoom.wad`) |
+| OpenTyrian | the contents of the Tyrian 2.1 folder (`tyrian1.lvl`, `music.mus`, `*.shp`, ...) to `/sd/tyrian/data/` | [Tyrian 2.1 freeware](https://camanis.net/tyrian/tyrian21.zip), the data OpenTyrian itself uses |
+| Quake | `id1/pak0.pak` to `/sd/roms/quake/id1/` | `pak0.pak` from the Quake shareware release (episode 1) |
+| Duke Nukem 3D | `DUKE3D.GRP` to `/sd/roms/duke3d/duke3d.grp` | tested with the Atomic Edition file |
+
+Doom's `prboom.wad` is built into the app; you don't need to copy it.
 
 | App | Folder | App | Folder |
 |---|---|---|---|
