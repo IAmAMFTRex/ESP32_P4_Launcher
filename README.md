@@ -249,26 +249,31 @@ A folder can have its own icon: put an `icon.png` (best 88x88) in its directory,
 
 ## Preparing the SD card
 
+The [`SDcard`](SDcard) folder is a ready start: copy its contents to the root of an empty FAT32 card, then on
+Wi-Fi choose Settings → Apps → **Install all**. It already holds the freely shareable game data: Tyrian 2.1
+(freeware), the Doom and Quake shareware episodes and gngeo's data file. It also has the controller database and
+an empty folder for each system's ROMs. Its [README](SDcard/README.md) explains each folder.
+
 ```
 /sd
-├── apps/<name>/<name>.papp     applications
+├── apps/<name>/<name>.papp     applications (Settings → Apps puts them here)
 ├── apps/<name>/icon.png        optional icon (square, best at 88×88, transparency OK)
+├── config/gamepads.txt         controller mappings shared by everyone (updated by Settings → Apps)
+├── config/gamepads_mine.txt    your own mappings (Settings → Map controller)
 ├── roms/<system>/              ROMs and game data (table below)
 ├── odroid/data/<system>/       emulator saves (created for you)
-└── saves/doom/                 Doom saves (create this folder)
+└── saves/doom/                 Doom saves
 ```
 
-No ROMs or game data are included. You need to supply your own legally obtained files.
+No ROMs, BIOS files or commercial game data are included. You need to supply your own legally obtained files.
 
-The apps themselves come from Settings → Apps (on Wi-Fi), so a new card needs only the data. The four game
-ports need these files; the freeware and shareware versions work:
-
-| Game | Copy | Freely available version |
+| Game | Copy | In the `SDcard` folder |
 |---|---|---|
-| Doom | one IWAD to `/sd/roms/doom/`: `doom.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`, `doom1.wad` or `freedoom.wad` (the first one found, in that order). Create `/sd/saves/doom` for saves | `doom1.wad` from the Doom shareware release, or [Freedoom](https://freedoom.github.io/) (rename `freedoom1.wad` to `freedoom.wad`) |
-| OpenTyrian | the contents of the Tyrian 2.1 folder (`tyrian1.lvl`, `music.mus`, `*.shp`, ...) to `/sd/tyrian/data/` | [Tyrian 2.1 freeware](https://camanis.net/tyrian/tyrian21.zip), the data OpenTyrian itself uses |
-| Quake | `id1/pak0.pak` to `/sd/roms/quake/id1/` | `pak0.pak` from the Quake shareware release (episode 1) |
-| Duke Nukem 3D | `DUKE3D.GRP` to `/sd/roms/duke3d/duke3d.grp` | tested with the Atomic Edition file |
+| Doom | one IWAD to `/sd/roms/doom/`: `doom.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`, `doom1.wad` or `freedoom.wad` (the first one found, in that order) | `doom1.wad`, the shareware episode. [Freedoom](https://freedoom.github.io/) also works (rename `freedoom1.wad` to `freedoom.wad`) |
+| OpenTyrian | the contents of the Tyrian 2.1 folder (`tyrian1.lvl`, `music.mus`, `*.shp`, ...) to `/sd/tyrian/data/` | Tyrian 2.1, [freeware](https://camanis.net/tyrian/tyrian21.zip) and the data OpenTyrian itself uses |
+| Quake | `id1/pak0.pak` to `/sd/roms/quake/id1/` | `pak0.pak`, the shareware episode |
+| Duke Nukem 3D | `DUKE3D.GRP` to `/sd/roms/duke3d/duke3d.grp` | not included (commercial); tested with the Atomic Edition file |
+| Neo Geo | `neogeo.zip` (BIOS) and the games to `/sd/roms/neogeo/` | `gngeo_data.zip`, the emulator's own data; the BIOS is not included |
 
 Doom's `prboom.wad` is built into the app; you don't need to copy it.
 
@@ -307,6 +312,22 @@ Choosing **Exit game** in an emulator returns to its ROM browser. Leaving the br
 Every emulator's game menu is drawn by the launcher and offers the same items: Resume game, Save game, Load
 saved game and Delete save (when there is a save), Restart game, Volume and Exit game. Volume is the
 launcher's volume, the same as in Settings. On the Spectrum, Y opens the on-screen keyboard instead of volume.
+
+### Controller mappings
+
+Most USB pads work without setup. If the buttons of yours come out wrong, map it once in **Settings → Map
+controller**. Mappings are text on the card, one line per controller model (USB VID:PID):
+
+```
+054C:0268  A=B B=A  # DualShock 3
+```
+
+Each `<button the pad reports>=<button it should be>` pair lists a button that differs; `-` ignores one. The
+launcher reads `/sd/config/gamepads_mine.txt` (yours, written by Map controller), then `/sd/config/gamepads.txt`
+(the shared database). **Share a mapping:** add its line to [`SDcard/config/gamepads.txt`](SDcard/config/gamepads.txt)
+in a pull request. Settings → Apps downloads the newest database together with the app list, so the next
+owner of that pad doesn't need to map it. Mappings made with a launcher before 0.23 (kept in the board's flash)
+still work and are copied to your file the first time the pad connects.
 
 ## Writing your own PAPP
 
@@ -582,7 +603,7 @@ components/
   lx_loader/           App Manager: loader, relocation, imports, services, teardown
   lx_comp/             compositor (surfaces → PPA → panel)
   lx_audio/            audio engine
-  lx_input/            input manager
+  lx_input/            input manager, controller mappings (lx_padmap.c)
   lx_ui/               content browser, menus, overlays
   lx_gfx/              software drawing and font for launcher screens
   lx_devlink/          DevLink protocol
@@ -601,6 +622,8 @@ apps/                  emulators, games and test apps
   common/icons/        emulator and folder icons
 tools/papp_dev.py      DevLink host tool
 tools/make_release.py  release files for Settings → Update, every board
+tools/make_apps_release.py  app catalogue and controller database for Settings → Apps
+SDcard/                starter card: shareable game data, controller database, ROM folders
 tests/host/            relocation test
 tests/board/smoke.py   board regression run
 docs/                  design, plan, test checklist, porting guide

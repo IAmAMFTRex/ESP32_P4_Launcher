@@ -138,12 +138,14 @@ bool lx_input_gamepad(int player, papp_gamepad_t *out)
     return c;
 }
 
+/* Mappings live on the SD card (lx_padmap.c). Launchers before 0.23 kept them in
+ * NVS: such a mapping still applies and is copied to the card for sharing. */
 static void map_key(char *key, uint16_t vid, uint16_t pid)
 {
     snprintf(key, 16, "p%04x%04x", vid, pid);
 }
 
-static bool map_load(uint16_t vid, uint16_t pid, uint8_t *map)
+static bool map_load_nvs(uint16_t vid, uint16_t pid, uint8_t *map)
 {
     nvs_handle_t h;
     if (nvs_open("padmap", NVS_READONLY, &h) != ESP_OK) return false;
@@ -155,10 +157,22 @@ static bool map_load(uint16_t vid, uint16_t pid, uint8_t *map)
     return ok;
 }
 
+static const char *map_load(const char *name, uint16_t vid, uint16_t pid, uint8_t *map)
+{
+    switch (lx_padmap_load(vid, pid, map)) {
+    case LX_PADMAP_MINE: return "your mapping";
+    case LX_PADMAP_DB:   return "mapping from the database";
+    }
+    if (!map_load_nvs(vid, pid, map)) return NULL;
+    lx_padmap_save(vid, pid, name, map);
+    return "saved mapping";
+}
+
 int lx_input_pad_attach(const char *name, uint16_t vid, uint16_t pid)
 {
     uint8_t map[LX_INPUT_MAP_BITS];
-    bool has_map = map_load(vid, pid, map);
+    const char *from = map_load(name, vid, pid, map);
+    bool has_map = from != NULL;
     LOCK();
     int player = -1;
     for (int i = 0; i < PAPP_MAX_PLAYERS && player < 0; i++)    /* back to its own slot */
@@ -179,8 +193,8 @@ int lx_input_pad_attach(const char *name, uint16_t vid, uint16_t pid)
         push_event(PAPP_EV_DEVICE_ADDED, player, 0, 0);
     }
     UNLOCK();
-    if (player >= 0) ESP_LOGI(TAG, "player %d: %s (%04X:%04X)%s", player + 1, name, vid, pid,
-                              has_map ? ", saved button mapping" : "");
+    if (player >= 0) ESP_LOGI(TAG, "player %d: %s (%04X:%04X)%s%s", player + 1, name, vid, pid,
+                              has_map ? ", " : "", has_map ? from : "");
     return player;
 }
 
@@ -221,22 +235,46 @@ esp_err_t lx_input_pad_set_map(int player, const uint8_t *map)
 {
     if (player < 0 || player >= PAPP_MAX_PLAYERS || !s_pads[player].attached) return ESP_ERR_INVALID_ARG;
     pad_t *p = &s_pads[player];
-    char key[16];
+    esp_err_t e = lx_padmap_save(p->st.vid, p->st.pid, p->st.name, map);
+    char key[16];                           /* an NVS copy from before 0.23 must not come back */
     map_key(key, p->st.vid, p->st.pid);
     nvs_handle_t h;
-    esp_err_t e = nvs_open("padmap", NVS_READWRITE, &h);
-    if (e != ESP_OK) return e;
-    e = map ? nvs_set_blob(h, key, map, LX_INPUT_MAP_BITS) : nvs_erase_key(h, key);
-    if (e == ESP_ERR_NVS_NOT_FOUND) e = ESP_OK;
-    if (e == ESP_OK) e = nvs_commit(h);
-    nvs_close(h);
+    if (nvs_open("padmap", NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_erase_key(h, key) == ESP_OK) nvs_commit(h);
+        nvs_close(h);
+    }
+    uint8_t db[LX_INPUT_MAP_BITS];          /* without one of your own: the database's */
+    bool from_db = !map && lx_padmap_load(p->st.vid, p->st.pid, db) == LX_PADMAP_DB;
     LOCK();
-    p->has_map = map != NULL;
+    p->has_map = map || from_db;
     if (map) memcpy(p->map, map, LX_INPUT_MAP_BITS);
+    else if (from_db) memcpy(p->map, db, LX_INPUT_MAP_BITS);
     bool fire = pad_refresh(player);
     UNLOCK();
     fire_sys(fire);
     return e;
+}
+
+void lx_input_pad_reload_maps(void)
+{
+    for (int i = 0; i < PAPP_MAX_PLAYERS; i++) {
+        LOCK();
+        pad_t *p = &s_pads[i];
+        bool attached = p->attached;
+        uint16_t vid = p->st.vid, pid = p->st.pid;
+        UNLOCK();
+        if (!attached) continue;
+        uint8_t map[LX_INPUT_MAP_BITS];
+        bool has_map = lx_padmap_load(vid, pid, map) != LX_PADMAP_NONE;
+        LOCK();
+        if (p->attached && p->st.vid == vid && p->st.pid == pid) {
+            p->has_map = has_map;
+            if (has_map) memcpy(p->map, map, LX_INPUT_MAP_BITS);
+        }
+        bool fire = pad_refresh(i);
+        UNLOCK();
+        fire_sys(fire);
+    }
 }
 
 void lx_input_pad_detach(int player)

@@ -1,0 +1,13 @@
+# Only files that may be shared go into git (see README.md). Everything else you put
+# here (ROMs, BIOS files, saves, commercial game data) stays on your PC.
+*
+!*/
+!.gitignore
+!.gitattributes
+!.gitkeep
+!README.md
+!config/gamepads.txt
+!Tyrian/data/**
+!roms/doom/doom1.wad
+!roms/quake/id1/pak0.pak
+!roms/neogeo/gngeo_data.zip

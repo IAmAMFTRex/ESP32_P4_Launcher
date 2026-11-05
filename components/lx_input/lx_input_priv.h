@@ -4,3 +4,10 @@
 
 esp_err_t lx_input_usb_start(void);
 esp_err_t lx_input_xinput_start(void);     /* after usb_start: the USB host is installed */
+
+/* Button mappings as text on the SD card (lx_padmap.c) */
+#include <stdint.h>
+#define LX_PADMAP_DIR "/sd/config"
+enum { LX_PADMAP_NONE, LX_PADMAP_MINE, LX_PADMAP_DB };
+int       lx_padmap_load(uint16_t vid, uint16_t pid, uint8_t *map);     /* -> LX_PADMAP_ */
+esp_err_t lx_padmap_save(uint16_t vid, uint16_t pid, const char *name, const uint8_t *map);  /* NULL: remove */

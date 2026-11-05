@@ -685,12 +685,13 @@ static void map_finish(void)
             for (int j = 0; j < LX_INPUT_MAP_BITS; j++) taken |= s_map[j] == i;
             if (!taken) s_map[i] = (uint8_t)i;
         }
-        lx_input_pad_set_map(s_map_player, s_map);
     }
+    esp_err_t e = s_map_done >= 4 ? lx_input_pad_set_map(s_map_player, s_map) : ESP_OK;
     lx_input_flush();
     show_settings();
     if (s_map_done < 4) upd_message("Controller", "Fewer than 4 buttons pressed, nothing was changed.");
-    else upd_message("Controller", "Mapping saved for this controller.");
+    else if (e != ESP_OK) upd_message("Controller", "The mapping could not be saved on the SD card.");
+    else upd_message("Controller", "Mapping saved for this controller, in /sd/config/gamepads_mine.txt.");
 }
 
 static void map_tick(void)
@@ -743,7 +744,8 @@ static void on_map_reset(lv_event_t *ev)
     lx_input_pad_set_map(s_map_player, NULL);
     lx_input_flush();
     show_settings();
-    upd_message("Controller", "This controller is back to its default buttons.");
+    upd_message("Controller", "Your mapping is removed. This controller uses the shared database's, "
+                "or its default buttons.");
 }
 
 static void build_map_screen(void)
@@ -1519,7 +1521,9 @@ static void store_tick(void)
             store_find_installed();
             int n = lx_appstore_count(), have = 0;
             for (int i = 0; i < n; i++) have += s_store_inst[i].path[0] != 0;
-            snprintf(buf, sizeof(buf), "%d apps online, %d of them installed", n, have);
+            snprintf(buf, sizeof(buf), "%d apps online, %d of them installed%s", n, have,
+                     lx_appstore_gamepads_updated() ? ". Controller database updated." : "");
+            if (lx_appstore_gamepads_updated()) lx_input_pad_reload_maps();
         }
         lv_label_set_text(s_store_status, buf);
         if (lv_screen_active() == s_store_scr && s_focused == s_store_back) {    /* to the first app */

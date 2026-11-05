@@ -13,6 +13,11 @@ endif()
 set(EXTRA_COMPONENT_DIRS "${LX_ROOT}/components" "${LX_ROOT}/boards/${LX_BOARD}")
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults;${LX_ROOT}/boards/${LX_BOARD}/sdkconfig.board")
 set(SDKCONFIG "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.${LX_BOARD}")
+# The component manager's "newer versions?" check solves each manifest alone, so it sees
+# esp_hosted releases beyond the board's pin; newer ones have dependencies under Kconfig
+# options this project doesn't have (ESP_HOSTED_HOST_USB_*), and the configure step fails.
+# Versions are pinned per board anyway (boards/<id>/board/idf_component.yml).
+set(ENV{IDF_COMPONENT_CHECK_NEW_VERSION} 0)
 # The image's version is what the SD update compares
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LX_ROOT}/components/lx_common/include/lx_common.h")
 file(STRINGS "${LX_ROOT}/components/lx_common/include/lx_common.h" LX_VER_LINE REGEX "LX_LAUNCHER_VERSION")

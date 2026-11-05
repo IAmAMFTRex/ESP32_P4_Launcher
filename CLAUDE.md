@@ -23,7 +23,9 @@ components/lx_comp/       compositor: app surfaces → PPA scale/rotate → pane
 components/lx_audio/      audio engine: per-stream rings → resample → mix → BSP codec (fixed rate)
 components/lx_ui/         launcher-drawn screens for apps: content browser (pick_file) + message box
 components/lx_input/      input manager: USB HID gamepads/keyboards, XInput (Xbox 360) pads (lx_input_xinput) + board buttons (merged into P1) → players + event queue; HOME chord;
-                          lx_hid_parse = HID descriptor parser; per-pad button mapping in NVS ("padmap")
+                          lx_hid_parse = HID descriptor parser; lx_padmap = per-pad button mapping as text on the card:
+                          /sd/config/gamepads_mine.txt (Map controller) wins over /sd/config/gamepads.txt (shared database,
+                          SDcard/config/gamepads.txt, downloaded by Settings → Apps); NVS "padmap" = pre-0.23, read-only fallback
 components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm; online update (latest.json);
                           lx_appstore = app catalogue for Settings → Apps (apps.json on the "apps" release)
 components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17)
@@ -55,6 +57,8 @@ tools/make_release.py     Release files for Settings → Update: launcher.bin + 
 tools/make_apps_release.py  Catalogue for Settings → Apps from build/apps: apps.json + .papp + icons; --publish uploads
                           them to the "apps" pre-release (bump the app's version.txt first). --base + /sd/update/apps_url.txt
                           = test from a local server
+SDcard/                   Starter card for new users (README.md): shareable game data, config/gamepads.txt, ROM folders.
+                          Its .gitignore is an allow-list: ROMs, BIOS, saves and commercial data put there stay local
 tests/host/test_reloc.py  Host relocation equivalence test
 tests/board/smoke.py      Board regression: relocation test, test apps, crash record
 ```
@@ -68,6 +72,7 @@ tests/board/smoke.py      Board regression: relocation test, test apps, crash re
   (`idf.py -B build_guition_p4_7 -DLX_BOARD=guition_p4_7 -p COM10 build flash`). Porting: `docs/PORTING_GUIDE.md`.
   M5Stack Tab5 `m5stack_tab5` on **COM15** (`-B build_m5stack_tab5`; image "launcher_m5stack_tab5").
   `managed_components/` is shared and esp_hosted differs per board: after building another board, add `reconfigure`.
+  launcher/CMakeLists.txt turns off the component manager's new-version check (newer esp_hosted releases broke configure).
   `papp_dev.py bootlog` shows what the board logged before DevLink came up (bring-up of a new board).
 
 ## Dev loop (works without touching the board)

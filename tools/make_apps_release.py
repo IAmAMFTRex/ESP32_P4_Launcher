@@ -15,9 +15,12 @@ update when the catalogue's is newer than the installed one.
 apps.json:
   {"format": 1,
    "folders": {"Emulators": {"icon": url}, ...},
-   "apps": [{"id", "name", "version", "folder", "dir", "file", "url", "size", "sha256", "icon"}]}
+   "apps": [{"id", "name", "version", "folder", "dir", "file", "url", "size", "sha256", "icon"}],
+   "gamepads": {"url", "size", "sha256"}}
 folder: where a new install goes (/sd/apps/<folder>/<dir>/<file>; "" = the main page).
 An installed app is updated where it is, wherever the user moved it.
+gamepads: the controller mapping database, SDcard/config/gamepads.txt; the launcher
+replaces /sd/config/gamepads.txt with it when Settings -> Apps reads the catalogue.
 """
 import argparse
 import hashlib
@@ -33,6 +36,7 @@ REPO = "giltal/ESP32_P4_Launcher"
 TAG = "apps"
 BASE = f"https://github.com/{REPO}/releases/download/{TAG}/"
 ICONS = os.path.join(ROOT, "apps", "common", "icons")
+GAMEPADS = os.path.join(ROOT, "SDcard", "config", "gamepads.txt")
 FOLDERS = {"emu.": "Emulators", "game.": "Games"}          # by app id prefix; others: main page
 FOLDER_ICONS = {"Emulators": "folder_emulators.png", "Games": "folder_games.png"}
 PAPP_MAGIC = 0x32504150          # "PAP2"
@@ -108,8 +112,16 @@ def main():
     if not apps:
         raise SystemExit("no app built: run python apps/build_all.py")
 
+    catalogue = dict(format=1, folders=folders, apps=apps)
+    if os.path.isfile(GAMEPADS):
+        shutil.copyfile(GAMEPADS, os.path.join(args.out, "gamepads.txt"))
+        files.append("gamepads.txt")
+        catalogue["gamepads"] = dict(url=base + "gamepads.txt", size=os.path.getsize(GAMEPADS),
+                                     sha256=sha256(GAMEPADS))
+        pads = sum(1 for line in open(GAMEPADS) if line.strip() and not line.lstrip().startswith("#"))
+        print(f"gamepads.txt: {pads} controllers")
     with open(os.path.join(args.out, "apps.json"), "w") as f:
-        json.dump(dict(format=1, folders=folders, apps=apps), f, indent=1)
+        json.dump(catalogue, f, indent=1)
     files.append("apps.json")
     print(f"{len(apps)} apps in {args.out}")
 

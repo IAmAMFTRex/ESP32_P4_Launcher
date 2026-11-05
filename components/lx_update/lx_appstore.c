@@ -5,7 +5,10 @@
  * once complete, so a failed download leaves the installed app as it was.
  *
  * apps.json: {"format":1, "folders":{"Emulators":{"icon":url}, ...},
- *             "apps":[{"id","name","version","folder","dir","file","url","size","sha256","icon"}]}
+ *             "apps":[{"id","name","version","folder","dir","file","url","size","sha256","icon"}],
+ *             "gamepads":{"url","size","sha256"}}
+ * gamepads is the controller mapping database (SDcard/config/gamepads.txt in the
+ * repository): fetching the catalogue also brings the card's copy up to date.
  */
 #include "lx_appstore.h"
 #include "lx_http.h"
@@ -29,6 +32,7 @@ static const char *TAG = "lx_appstore";
 #define CATALOGUE_MAX (64 * 1024)
 #define CHUNK         8192
 #define MAX_FOLDERS   8
+#define GAMEPADS_FILE "/sd/config/gamepads.txt"
 
 static volatile lx_appstore_state_t s_state;
 static volatile int s_percent;
@@ -37,6 +41,7 @@ static lx_appstore_app_t *s_apps;
 static int s_count;
 static struct { char name[24]; char icon[192]; } s_folders[MAX_FOLDERS];
 static int s_nfolders;
+static volatile bool s_pads_updated;
 
 static struct {
     int index;
@@ -49,6 +54,7 @@ int lx_appstore_percent(void)                { return s_percent; }
 const char *lx_appstore_error(void)          { return s_error; }
 int lx_appstore_count(void)                  { return s_count; }
 bool lx_appstore_newer(const char *a, const char *b) { return lx_version_newer(a, b); }
+bool lx_appstore_gamepads_updated(void)      { return s_pads_updated; }
 
 const lx_appstore_app_t *lx_appstore_app(int i)
 {
@@ -66,6 +72,40 @@ static void copy_str(char *dst, size_t len, cJSON *o, const char *key)
 {
     cJSON *v = cJSON_GetObjectItem(o, key);
     snprintf(dst, len, "%s", cJSON_IsString(v) ? v->valuestring : "");
+}
+
+static bool download(const char *url, const char *path, const char *sha, long size, bool progress);
+
+/* SHA-256 (hex) of a file, "" if there is none */
+static void file_sha(const char *path, char hex[65])
+{
+    hex[0] = 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    uint8_t buf[512], hash[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) mbedtls_sha256_update(&ctx, buf, n);
+    fclose(f);
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", hash[i]);
+}
+
+/* The card's controller database, replaced when the catalogue has another one */
+static void gamepads_sync(cJSON *g)
+{
+    char url[192], sha[65], have[65];
+    copy_str(url, sizeof(url), g, "url");
+    copy_str(sha, sizeof(sha), g, "sha256");
+    cJSON *size = cJSON_GetObjectItem(g, "size");
+    if (!url[0] || strlen(sha) != 64 || !cJSON_IsNumber(size)) return;
+    file_sha(GAMEPADS_FILE, have);
+    if (strcasecmp(have, sha) == 0) return;
+    s_pads_updated = download(url, GAMEPADS_FILE, sha, (long)size->valuedouble, false);
+    ESP_LOGI(TAG, "gamepad database %s", s_pads_updated ? "updated" : "did not download");
 }
 
 static void fetch_task(void *arg)
@@ -118,6 +158,8 @@ static void fetch_task(void *arg)
             s_nfolders++;
         }
         ESP_LOGI(TAG, "catalogue: %d apps", s_count);
+        s_pads_updated = false;
+        gamepads_sync(cJSON_GetObjectItem(j, "gamepads"));
         s_state = LX_APPSTORE_DONE;
     }
     cJSON_Delete(j);

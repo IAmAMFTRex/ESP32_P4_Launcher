@@ -44,12 +44,15 @@ void lx_input_pad_update(int player, uint32_t buttons, int16_t lx, int16_t ly, i
                          uint16_t lt, uint16_t rt);
 void lx_input_pad_detach(int player);
 
-/* Button mapping, per pad model (VID:PID), kept in NVS. Bits are PAPP_BTN_ positions.
- * Writes flash: call from a task with an internal stack, never from an app thread. */
+/* Button mapping, per pad model (VID:PID), as text on the SD card: your own in
+ * /sd/config/gamepads_mine.txt, else the shared /sd/config/gamepads.txt (lx_padmap.c).
+ * Bits are PAPP_BTN_ positions. set_map also clears a pre-0.23 copy in NVS (flash):
+ * call it from a task with an internal stack, never from an app thread. */
 #define LX_INPUT_MAP_BITS 20
 int       lx_input_pad_first(void);                 /* first real pad, or -1 */
 uint32_t  lx_input_pad_raw(int player);             /* buttons before the mapping */
-esp_err_t lx_input_pad_set_map(int player, const uint8_t *map);   /* NULL: back to default */
+esp_err_t lx_input_pad_set_map(int player, const uint8_t *map);   /* NULL: remove yours (database or default) */
+void      lx_input_pad_reload_maps(void);           /* the files changed: apply them to the connected pads */
 
 /* Sources: keyboards (boot report: modifiers + up to 6 usages) */
 void lx_input_kbd_attach(void);

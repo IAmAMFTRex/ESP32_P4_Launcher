@@ -45,5 +45,8 @@ void lx_appstore_reset(void);           /* result read: back to IDLE */
 int lx_appstore_percent(void);
 const char *lx_appstore_error(void);
 
+/* The last fetch replaced /sd/config/gamepads.txt (the controller mapping database) */
+bool lx_appstore_gamepads_updated(void);
+
 /* a > b for "x.y.z" versions */
 bool lx_appstore_newer(const char *a, const char *b);
