@@ -34,3 +34,16 @@ then the pad's name.
 To share yours: add its line to `config/gamepads.txt` here and open a pull request. Settings →
 Apps downloads the newest `gamepads.txt` to every card, so the next owner of that pad doesn't
 have to map it. Your own file always wins over the shared one.
+
+## Wi-Fi network
+
+The network you join in **Settings → Wi-Fi** is saved in `/sd/config/wifi.txt`, so it moves
+with the card. To set up a board without its screen, write the file yourself:
+
+```
+ssid=MyNetwork
+password=MyPassword
+```
+
+Delete the file, or choose Forget, to forget the network. The password is in plain text: keep
+the file to yourself (git ignores it here).

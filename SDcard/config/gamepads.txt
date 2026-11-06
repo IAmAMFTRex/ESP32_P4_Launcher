@@ -7,3 +7,8 @@
 # Buttons not listed stay as they are. Settings -> Map controller writes your own mapping
 # to /sd/config/gamepads_mine.txt (it wins over this file): to share it, add its line
 # here in a pull request.
+
+054C:0268  A=B B=A X=Y Y=X  # Sony DualShock 3
+054C:09CC  A=B B=A X=Y Y=X  # Sony DualShock 4 (v2)
+2DC8:310A  SELECT=START START=SELECT  # 8BitDo Ultimate 2C Wired
+0079:0011  # Generic USB NES pad (DragonRise)

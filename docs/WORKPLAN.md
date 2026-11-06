@@ -415,8 +415,9 @@ the V2 panel table, and touch and sound checked by hand.
 **Third board, M5Stack Tab5 (`boards/m5stack_tab5`):** ILI9881C 720x1280 panel used in landscape,
 GT911, ES8388, RX8130 RTC, power rails on two I2C expanders, C6 with esp_hosted 1.4 (M5Stack's C6
 firmware). Same SD card: NES, Doom, Wi-Fi scan and `smoke.py` pass. Added on the way: `papp_dev.py
-bootlog` (log kept from boot). Orientation, touch and sound checked by hand. Not done: the ST7123
-panel variant and the battery (2 cells via INA226).
+bootlog` (log kept from boot). Orientation, touch and sound checked by hand. Not done: the battery
+(2 cells via INA226). The ST7123 / ST7121 panel variants are detected and set up as in M5Stack's BSP,
+waiting for a test on such a unit.
 
 Pick a board that is **meaningfully different** from the reference to stress the abstraction — e.g.
 a 7″ 1024×600 landscape P4 board (Espressif ESP32-P4-Function-EV-Board or a Waveshare ESP32-P4

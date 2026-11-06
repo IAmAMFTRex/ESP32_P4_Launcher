@@ -28,7 +28,8 @@ components/lx_input/      input manager: USB HID gamepads/keyboards, XInput (Xbo
                           SDcard/config/gamepads.txt, downloaded by Settings → Apps); NVS "padmap" = pre-0.23, read-only fallback
 components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm; online update (latest.json);
                           lx_appstore = app catalogue for Settings → Apps (apps.json on the "apps" release)
-components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17)
+components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17);
+                          saved network = /sd/config/wifi.txt (ssid=/password= lines; NVS "net" = pre-0.24, moved to the card at boot)
 components/lx_web/        Wi-Fi file manager: web page for the SD card, on request, with a PIN per start
 papp-sdk/                 App SDK: include/papp/papp.h, runtime/ (crt0, libc glue), ld/papp.ld,
                           tools/papp_build.py, tools/papp_pack.py. App version: apps/<app>/version.txt

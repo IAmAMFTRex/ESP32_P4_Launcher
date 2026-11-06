@@ -102,8 +102,9 @@ it yet.
 | C6 firmware | esp_hosted 2.0.17 | esp_hosted 2.3.0 (host 2.12 works, with a version warning) |
 | Extras | battery pin, GPIO pad add-on | RX8025T real-time clock (keeps UTC; set from NTP) |
 
-The M5Stack Tab5: 720x1280 ILI9881C portrait panel (`display_rot` 90; units with the ST7123 panel,
-recognised by touch at 0x55, are refused for now: that panel wants 24-bit pixels), GT911 touch, ES8388
+The M5Stack Tab5: 720x1280 portrait panel (`display_rot` 90), one of three, told apart at boot by the
+touch controller: ILI9881C with GT911 touch, or ST7123 / ST7121 with touch built in at 0x55 (its
+firmware version register: 1 = ST7121, 3 = ST7123; init tables from M5Stack's BSP), ES8388
 codec, RX8130 RTC, two PI4IOE5V6408 expanders (0x43: speaker amp, LCD reset; 0x44: C6 power, USB 5 V,
 charging), C6 on SDIO CLK 12, CMD 13, D0-D3 11/10/9/8, reset 15. Its 2-cell battery (INA226 at 0x41)
 isn't reported yet.

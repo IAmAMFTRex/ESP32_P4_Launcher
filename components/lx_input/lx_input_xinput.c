@@ -27,6 +27,7 @@ typedef struct {
     usb_transfer_t *in;
     int player;
     bool gone;
+    bool failed;                    /* IN transfer failed: endpoint halted, client_task restarts it */
 } xpad_t;
 
 static usb_host_client_handle_t s_client;
@@ -62,6 +63,10 @@ static void in_done(usb_transfer_t *t)
     xpad_t *p = t->context;
     if (t->status == USB_TRANSFER_STATUS_COMPLETED) on_report(p, t->data_buffer, t->actual_num_bytes);
     if (p->gone || t->status == USB_TRANSFER_STATUS_NO_DEVICE || t->status == USB_TRANSFER_STATUS_CANCELED) return;
+    if (t->status != USB_TRANSFER_STATUS_COMPLETED) {
+        p->failed = true;           /* the endpoint is halted: a submit would fail */
+        return;
+    }
     if (usb_host_transfer_submit(t) != ESP_OK) ESP_LOGW(TAG, "resubmit failed");
 }
 
@@ -235,6 +240,17 @@ static void client_task(void *arg)
             if (s_pads[i].dev && s_pads[i].gone) {
                 ESP_LOGI(TAG, "player %d: XInput pad gone", s_pads[i].player + 1);
                 close_pad(&s_pads[i]);
+            } else if (s_pads[i].dev && s_pads[i].failed) {
+                /* A failed transfer (e.g. the BNA workaround in lx_input_usb.c) halts
+                   the endpoint: clear it and poll again */
+                xpad_t *p = &s_pads[i];
+                uint8_t ep = p->in->bEndpointAddress;
+                p->failed = false;
+                usb_host_endpoint_halt(p->dev, ep);
+                usb_host_endpoint_flush(p->dev, ep);
+                usb_host_endpoint_clear(p->dev, ep);
+                esp_err_t e = usb_host_transfer_submit(p->in);
+                ESP_LOGW(TAG, "player %d: restarted after a transfer error: %s", p->player + 1, esp_err_to_name(e));
             }
     }
 }

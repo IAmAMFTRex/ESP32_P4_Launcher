@@ -13,13 +13,80 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_attr.h"
 #include "usb/usb_host.h"
 #include "usb/hid_host.h"
+#include "hal/usb_dwc_hal.h"
+#include "hal/usb_dwc_ll.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
 static const char *TAG = "lx_hid";
+
+/* ── USB host BNA workaround ────────────────────────────────────────────────
+ * IDF v5.5.2 usb_dwc_hal_chan_decode_intr() asserts that every channel error
+ * comes with CHHLTD. BNA (the DMA fetched a descriptor that wasn't ready, seen
+ * when apps load both cores and the PPA) arrives without it, so the assert
+ * panics in the USB interrupt. Wrapped at link time (CMakeLists.txt): an error
+ * without a halt is reported as a transfer error, at once if the channel has
+ * already stopped (every BNA seen so far: disabling it would raise no CHHLTD),
+ * else on the CHHLTD that disabling it raises. The URB fails and interface_cb
+ * restarts the device; the pad is back within ~50 ms. */
+
+#define CHAN_ERR_MSK (USB_DWC_LL_INTR_CHAN_STALL | USB_DWC_LL_INTR_CHAN_BBLEER | \
+                      USB_DWC_LL_INTR_CHAN_BNAINTR | USB_DWC_LL_INTR_CHAN_XCS_XACT_ERR)
+
+static uint32_t s_chan_err[16];             /* deferred error bits per channel */
+static volatile uint32_t s_bna_count;       /* channel errors without a halt (logged by lx_hid) */
+
+usb_dwc_hal_chan_event_t __real_usb_dwc_hal_chan_decode_intr(usb_dwc_hal_chan_t *chan);
+
+/* The channel has stopped with error bits `e`: report it as IDF's error path would */
+static IRAM_ATTR usb_dwc_hal_chan_event_t chan_stopped_with_error(usb_dwc_hal_chan_t *chan, uint32_t e)
+{
+    chan->flags.active = 0;
+    if (chan->flags.halt_requested) {
+        /* The HCD asked for this halt meanwhile and waits for HALT_REQ;
+           it treats a halted transfer as failed anyway */
+        chan->flags.halt_requested = 0;
+        return USB_DWC_HAL_CHAN_EVENT_HALT_REQ;
+    }
+    /* Not USB_DWC_HAL_CHAN_ERROR_BNA: the HCD maps it to ERROR_URB_NOT_AVAIL,
+       which _buffer_parse_error() aborts on. A transfer error fails the URB. */
+    chan->error = (e & USB_DWC_LL_INTR_CHAN_STALL)  ? USB_DWC_HAL_CHAN_ERROR_STALL :
+                  (e & USB_DWC_LL_INTR_CHAN_BBLEER) ? USB_DWC_HAL_CHAN_ERROR_PKT_BBL :
+                                                      USB_DWC_HAL_CHAN_ERROR_XCS_XACT;
+    return USB_DWC_HAL_CHAN_EVENT_ERROR;
+}
+
+IRAM_ATTR usb_dwc_hal_chan_event_t __wrap_usb_dwc_hal_chan_decode_intr(usb_dwc_hal_chan_t *chan)
+{
+    volatile usb_dwc_host_chan_regs_t *r = chan->regs;
+    uint32_t in = r->hcint_reg.val;
+    int i = chan->flags.chan_idx;
+
+    if ((in & CHAN_ERR_MSK) && !(in & USB_DWC_LL_INTR_CHAN_CHHLTD)) {
+        r->hcint_reg.val = in & CHAN_ERR_MSK;           /* write 1 to clear: only the errors */
+        s_bna_count++;
+        if (!usb_dwc_ll_hcchar_chan_is_enabled(r)) {
+            /* Already stopped (as after a BNA): disabling it raises no CHHLTD */
+            uint32_t e = s_chan_err[i] | (in & CHAN_ERR_MSK);
+            s_chan_err[i] = 0;
+            return chan_stopped_with_error(chan, e);
+        }
+        s_chan_err[i] |= in & CHAN_ERR_MSK;
+        usb_dwc_ll_hcchar_disable_chan(r);              /* CHHLTD follows */
+        return USB_DWC_HAL_CHAN_EVENT_NONE;
+    }
+    if (s_chan_err[i] && (in & USB_DWC_LL_INTR_CHAN_CHHLTD)) {
+        uint32_t e = s_chan_err[i] | (in & CHAN_ERR_MSK);
+        s_chan_err[i] = 0;
+        r->hcint_reg.val = in;
+        return chan_stopped_with_error(chan, e);
+    }
+    return __real_usb_dwc_hal_chan_decode_intr(chan);
+}
 
 #define MAX_DEVS 8
 
@@ -43,6 +110,7 @@ typedef struct {
 
 static dev_t s_devs[MAX_DEVS];
 static QueueHandle_t s_connect_q;
+static QueueHandle_t s_restart_q;          /* devices whose transfer failed */
 
 static dev_t *find_dev(hid_host_device_handle_t h)
 {
@@ -274,8 +342,10 @@ static void interface_cb(hid_host_device_handle_t h, const hid_host_interface_ev
         else hid_host_device_close(h);
         break;
     case HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR:
-        /* Usually the device going away; DISCONNECTED follows from the USB core. */
+        /* The device going away (DISCONNECTED follows from the USB core), or a
+           failed transfer: hid_host doesn't resubmit, so lx_hid restarts it */
         ESP_LOGW(TAG, "transfer error");
+        if (d) xQueueSend(s_restart_q, &h, 0);
         break;
     default:
         break;
@@ -404,11 +474,28 @@ static void open_device(hid_host_device_handle_t h)
     }
 }
 
+/* After a failed transfer: give a disconnect time to arrive, then restart the
+ * interface (halt, flush, clear the endpoint, resubmit) if the device is still here */
+static void restart_device(hid_host_device_handle_t h)
+{
+    vTaskDelay(pdMS_TO_TICKS(50));
+    if (!find_dev(h)) return;
+    esp_err_t e = hid_host_device_stop(h);
+    if (e == ESP_OK) e = hid_host_device_start(h);
+    ESP_LOGW(TAG, "restarted device after a transfer error: %s", esp_err_to_name(e));
+}
+
 static void hid_task(void *arg)
 {
+    uint32_t bna_seen = 0;
     for (;;) {
         hid_host_device_handle_t h;
-        if (xQueueReceive(s_connect_q, &h, portMAX_DELAY)) open_device(h);
+        if (xQueueReceive(s_connect_q, &h, pdMS_TO_TICKS(200))) open_device(h);
+        while (xQueueReceive(s_restart_q, &h, 0)) restart_device(h);
+        if (s_bna_count != bna_seen) {
+            bna_seen = s_bna_count;
+            ESP_LOGW(TAG, "USB channel error without halt (BNA workaround), %lu so far", (unsigned long)bna_seen);
+        }
     }
 }
 
@@ -428,6 +515,7 @@ static void usb_lib_task(void *arg)
 esp_err_t lx_input_usb_start(void)
 {
     s_connect_q = xQueueCreate(8, sizeof(hid_host_device_handle_t));
+    s_restart_q = xQueueCreate(8, sizeof(hid_host_device_handle_t));
     if (xTaskCreatePinnedToCore(usb_lib_task, "usb_host", 4096, xTaskGetCurrentTaskHandle(), 5, NULL, 0) != pdPASS)
         return ESP_ERR_NO_MEM;
     uint32_t err = ESP_ERR_TIMEOUT;

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -65,31 +66,92 @@ static void post(cmd_t c)
 
 /* ── Saved network ───────────────────────────────────────────── */
 
-static void creds_load(void)
+/* The network lives on the SD card, so a card moved to another board takes it along:
+ *   ssid=<name>
+ *   password=<password>
+ * Written when a network picked in Settings first connects, removed by Forget. Hand-written
+ * files work too. Older launchers kept it in NVS ("net": ssid, pass): read once and moved to the card.
+ * The time zone stays in NVS. */
+#define WIFI_DIR   "/sd/config"
+#define WIFI_FILE  WIFI_DIR "/wifi.txt"
+
+static void copy_field(char *dst, size_t size, const char *src)    /* cut to the field's size */
+{
+    size_t n = strnlen(src, size - 1);
+    memcpy(dst, src, n);
+    dst[n] = 0;
+}
+
+static bool file_load(void)
+{
+    FILE *f = fopen(WIFI_FILE, "r");
+    if (!f) return false;
+    char line[128];
+    s_ssid[0] = s_pass[0] = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = 0;         /* only the line end: names may have spaces */
+        if (!strncmp(line, "ssid=", 5))          copy_field(s_ssid, sizeof(s_ssid), line + 5);
+        else if (!strncmp(line, "password=", 9)) copy_field(s_pass, sizeof(s_pass), line + 9);
+    }
+    fclose(f);
+    ESP_LOGI(TAG, "network from %s: %s", WIFI_FILE, s_ssid[0] ? s_ssid : "(none)");
+    return true;
+}
+
+static bool file_save(void)
+{
+    mkdir(WIFI_DIR, 0775);
+    FILE *f = fopen(WIFI_FILE ".tmp", "w");
+    if (!f) return false;
+    fprintf(f, "# Wi-Fi network of the launcher (Settings -> Wi-Fi). Copy this file to another card to\n"
+               "# set up a board, or delete it to forget the network.\n"
+               "ssid=%s\npassword=%s\n", s_ssid, s_pass);
+    bool ok = fclose(f) == 0;
+    if (ok) {
+        remove(WIFI_FILE);                      /* FAT rename doesn't replace */
+        ok = rename(WIFI_FILE ".tmp", WIFI_FILE) == 0;
+    }
+    if (!ok) ESP_LOGW(TAG, "could not write %s", WIFI_FILE);
+    return ok;
+}
+
+static void nvs_creds_erase(void)
 {
     nvs_handle_t h;
+    if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return;
+    bool had = nvs_erase_key(h, "ssid") == ESP_OK;
+    had |= nvs_erase_key(h, "pass") == ESP_OK;
+    if (had) nvs_commit(h);
+    nvs_close(h);
+}
+
+static void creds_load(void)
+{
+    bool from_file = file_load();
+    nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return;
-    size_t a = sizeof(s_ssid), b = sizeof(s_pass);
-    if (nvs_get_str(h, "ssid", s_ssid, &a) != ESP_OK) s_ssid[0] = 0;
-    if (nvs_get_str(h, "pass", s_pass, &b) != ESP_OK) s_pass[0] = 0;
+    if (!from_file) {                           /* saved by an older launcher */
+        size_t a = sizeof(s_ssid), b = sizeof(s_pass);
+        if (nvs_get_str(h, "ssid", s_ssid, &a) != ESP_OK) s_ssid[0] = 0;
+        if (nvs_get_str(h, "pass", s_pass, &b) != ESP_OK) s_pass[0] = 0;
+    }
     uint8_t tz;
     if (nvs_get_u8(h, "tz", &tz) == ESP_OK && tz < ZONES) s_tz = tz;
     nvs_close(h);
+    if (!from_file && s_ssid[0] && file_save()) {
+        ESP_LOGI(TAG, "network %s moved from NVS to %s", s_ssid, WIFI_FILE);
+        nvs_creds_erase();
+    }
 }
 
 static void creds_save(bool keep)
 {
-    nvs_handle_t h;
-    if (nvs_open(NS, NVS_READWRITE, &h) != ESP_OK) return;
     if (keep) {
-        nvs_set_str(h, "ssid", s_ssid);
-        nvs_set_str(h, "pass", s_pass);
+        if (file_save()) nvs_creds_erase();
     } else {
-        nvs_erase_key(h, "ssid");
-        nvs_erase_key(h, "pass");
+        remove(WIFI_FILE);
+        nvs_creds_erase();
     }
-    nvs_commit(h);
-    nvs_close(h);
 }
 
 /* ── Events ──────────────────────────────────────────────────── */

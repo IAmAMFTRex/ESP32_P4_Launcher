@@ -17,7 +17,7 @@ M5Stack Tab5 (1280×720).
 
 | Launcher version | App ABI | Toolchain | Boards |
 |---|---|---|---|
-| 0.21.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600), M5Stack Tab5 (720×1280) |
+| 0.24.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600), M5Stack Tab5 (720×1280) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -125,7 +125,7 @@ Two rules keep this portable: apps only see the ABI, and the launcher core only 
 - App catalogue: Settings → Apps lists the apps published on GitHub with the installed and online version,
   and installs or updates them over Wi-Fi (checked with SHA-256)
 - Controllers: USB HID pads are read from their own report descriptor, Xbox 360-style (XInput) pads and receivers such as 8BitDo's work too, and any pad can be remapped in Settings
-- Wi-Fi and network time through the on-board ESP32-C6
+- Wi-Fi and network time through the on-board ESP32-C6; the network is saved on the SD card (`config/wifi.txt`)
 - Real-time clock on boards that have one: the time survives power-off, and the home screen clock opens a
   date and time setup
 - Battery level in the system bar, on boards that measure it
@@ -161,8 +161,8 @@ Three boards are supported. All run the same apps from the same SD card. Adding 
 | Board id (`-DLX_BOARD=`) | `guition_p4_43` (default) | `guition_p4_7` | `m5stack_tab5` |
 | SoC | ESP32-P4, dual RISC-V at 360 MHz, chip revision v1.x | same | same |
 | Memory | 32 MB hex PSRAM at 200 MHz, 16 MB flash | same | same |
-| Display | 480×800 ST7701 MIPI-DSI, used in landscape as 800×480 | 1024×600 JD9165 MIPI-DSI, landscape | 720×1280 ILI9881C MIPI-DSI, used in landscape as 1280×720 |
-| Touch | GT911 capacitive | GT911 capacitive | GT911 capacitive |
+| Display | 480×800 ST7701 MIPI-DSI, used in landscape as 800×480 | 1024×600 JD9165 MIPI-DSI, landscape | 720×1280 MIPI-DSI (ILI9881C, ST7123 or ST7121, detected at start), used in landscape as 1280×720 |
+| Touch | GT911 capacitive | GT911 capacitive | GT911, or the touch built into the ST7123 / ST7121 panel |
 | Radio | ESP32-C6 over SDIO (Wi-Fi; BLE firmware present) | same, newer C6 firmware | ESP32-C6 over SDIO, M5Stack's C6 firmware |
 | Audio | ES8311 codec at a fixed 48 kHz | ES8311 codec at 48 kHz, NS4150 speaker amplifier | ES8388 codec at 48 kHz |
 | Clock | from the network or the PC after each power-on | RX8025T real-time clock | RX8130 real-time clock |
@@ -260,6 +260,7 @@ an empty folder for each system's ROMs. Its [README](SDcard/README.md) explains 
 ├── apps/<name>/icon.png        optional icon (square, best at 88×88, transparency OK)
 ├── config/gamepads.txt         controller mappings shared by everyone (updated by Settings → Apps)
 ├── config/gamepads_mine.txt    your own mappings (Settings → Map controller)
+├── config/wifi.txt             your Wi-Fi network (Settings → Wi-Fi, or write it yourself)
 ├── roms/<system>/              ROMs and game data (table below)
 ├── odroid/data/<system>/       emulator saves (created for you)
 └── saves/doom/                 Doom saves
@@ -328,6 +329,22 @@ launcher reads `/sd/config/gamepads_mine.txt` (yours, written by Map controller)
 in a pull request. Settings → Apps downloads the newest database together with the app list, so the next
 owner of that pad doesn't need to map it. Mappings made with a launcher before 0.23 (kept in the board's flash)
 still work and are copied to your file the first time the pad connects.
+
+The database already covers the Sony DualShock 3 and DualShock 4, the 8BitDo Ultimate 2C Wired and generic
+USB NES pads (VID 0079, PID 0011).
+
+### Wi-Fi network
+
+The network joined in **Settings → Wi-Fi** is saved on the card in `/sd/config/wifi.txt`, so it moves with the
+card to another board. To set up a board without its screen, write the file yourself:
+
+```
+ssid=MyNetwork
+password=MyPassword
+```
+
+Delete the file, or choose Forget, to forget the network. The password is stored as plain text. A network saved
+by a launcher before 0.24 (in the board's flash) is moved to the card at the next start.
 
 ## Writing your own PAPP
 
