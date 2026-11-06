@@ -52,15 +52,15 @@ ones come from the 7" board, the 800×480 ones from the 4.3" board.
 | ![Home screen with folders](docs/images/folders.png) | ![Games folder](docs/images/games.png) |
 | **Home screen:** folders with their own icons, clock, SD card and settings | **Games folder:** Doom, Duke Nukem 3D, OpenTyrian and Quake |
 | ![Settings](docs/images/settings.png) | ![Date and time](docs/images/date_time.png) |
-| **Settings:** volume, brightness, developer apps, controller mapping, Wi-Fi, update and system information | **Date and time:** on boards with a real-time clock, the home screen clock opens it |
+| **Settings:** volume, brightness, developer apps, controller mapping, Wi-Fi, update, the app catalogue and system information | **Date and time:** on boards with a real-time clock, the home screen clock opens it |
 | ![Paused](docs/images/pause_menu.png) | ![Content browser](docs/images/browser.png) |
 | **HOME** pauses any game under the launcher's menu | **Content browser:** All, Favorites and Recent tabs, with live search. Every emulator gets it from the launcher |
 | ![Game menu](docs/images/game_menu.png) | ![Volume overlay](docs/images/volume.png) |
-| **Emulator menu** over the running game | **Volume overlay,** drawn by the launcher for any app |
+| **Game menu,** the same in every emulator, over the running game | **Volume overlay,** drawn by the launcher for any app |
 | ![Doom](docs/images/doom.png) | ![Quake](docs/images/quake.png) |
 | **Doom** | **Quake** |
 | ![Duke Nukem 3D](docs/images/duke3d.png) | ![Wi-Fi](docs/images/wifi.png) |
-| **Duke Nukem 3D** | **Wi-Fi and time zone,** through the ESP32-C6 |
+| **Duke Nukem 3D** | **Wi-Fi and time zone,** through the ESP32-C6, with the Wi-Fi file manager |
 
 ## The PAPP concept
 
