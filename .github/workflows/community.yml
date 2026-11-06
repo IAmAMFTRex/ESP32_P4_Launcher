@@ -1,0 +1,33 @@
+name: Community apps
+
+on:
+  pull_request:
+    paths:
+      - "community/**"
+      - "tools/community.py"
+  push:
+    branches: [main]
+    paths:
+      - "community/**"
+      - "tools/community.py"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the community apps
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python tools/community.py --base "origin/${{ github.base_ref }}"
+          else
+            python tools/community.py
+          fi

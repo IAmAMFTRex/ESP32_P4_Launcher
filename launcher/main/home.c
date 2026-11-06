@@ -1339,7 +1339,7 @@ static void store_rows(void)
         } else if (!s_store_inst[i].path[0]) {
             snprintf(right, sizeof(right), "Get  %s", a->version);
             col = C_GREEN;
-            missing++;
+            missing += !a->community;           /* Install all leaves community apps to the user */
         } else if (store_has_update(i)) {
             snprintf(right, sizeof(right), "Update  %s " LV_SYMBOL_RIGHT " %s", s_store_inst[i].version, a->version);
             col = C_ACCENT;
@@ -1359,7 +1359,12 @@ static void store_rows(void)
         lv_obj_set_style_bg_color(b, C_FOCUS, LV_STATE_PRESSED);
         lv_obj_t *n = label(b, &lv_font_montserrat_20, C_TEXT, a->name);
         lv_obj_align(n, LV_ALIGN_LEFT_MID, 14, 0);
-        if (a->folder[0]) {
+        if (a->community) {
+            char by[48];
+            snprintf(by, sizeof(by), "Community, by %s", a->author[0] ? a->author : "?");
+            lv_obj_t *f = label(b, &lv_font_montserrat_14, C_DIM, by);
+            lv_obj_align_to(f, n, LV_ALIGN_OUT_RIGHT_MID, 12, 2);
+        } else if (a->folder[0]) {
             lv_obj_t *f = label(b, &lv_font_montserrat_14, C_DIM, a->folder);
             lv_obj_align_to(f, n, LV_ALIGN_OUT_RIGHT_MID, 12, 2);
         }
@@ -1419,15 +1424,19 @@ static void on_store_pick(lv_event_t *ev)
     const lx_appstore_app_t *a = lx_appstore_app(i);
     if (!a || i == s_store_doing || store_queued(i)) return;
     s_store_sel = i;
-    char text[192], size[16];
+    char text[400], size[16];
     bool have = s_store_inst[i].path[0];
     if (a->size >= 1000000) snprintf(size, sizeof(size), "%.1f MB", a->size / 1e6);
     else snprintf(size, sizeof(size), "%ld KB", (a->size + 999) / 1000);
+    int n = 0;
+    if (a->community)                           /* shared without source: say so before installing */
+        n = snprintf(text, sizeof(text), "%s\nBy %s. A community app, not reviewed: like any app, "
+                     "it can change anything on the card.\n\n", a->description, a->author);
     if (have)
-        snprintf(text, sizeof(text), "Online: version %s, %s\nInstalled: version %s",
+        snprintf(text + n, sizeof(text) - n, "Online: version %s, %s\nInstalled: version %s",
                  a->version, size, s_store_inst[i].version);
     else
-        snprintf(text, sizeof(text), "Version %s, %s\nIt goes to %s.", a->version, size,
+        snprintf(text + n, sizeof(text) - n, "Version %s, %s\nIt goes to %s.", a->version, size,
                  a->folder[0] ? a->folder : "the main page");
     menu_open(a->name, text, 2);
     menu_add(!have ? "Install" : store_has_update(i) ? "Update" : "Reinstall", ACT_STORE_GET);
@@ -1441,7 +1450,8 @@ static void on_store_all(lv_event_t *ev)
     for (int i = 0; i < lx_appstore_count(); i++) any_update |= store_has_update(i);
     int n = 0;
     for (int i = 0; i < lx_appstore_count(); i++) {
-        bool want = any_update ? store_has_update(i) : !s_store_inst[i].path[0];
+        bool want = any_update ? store_has_update(i)
+                               : !s_store_inst[i].path[0] && !lx_appstore_app(i)->community;
         if (want && i != s_store_doing && !store_queued(i)) {
             store_add(i);
             n++;

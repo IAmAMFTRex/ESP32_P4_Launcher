@@ -6,9 +6,12 @@
  *
  * apps.json: {"format":1, "folders":{"Emulators":{"icon":url}, ...},
  *             "apps":[{"id","name","version","folder","dir","file","url","size","sha256","icon"}],
- *             "gamepads":{"url","size","sha256"}}
+ *             "gamepads":{"url","size","sha256"},
+ *             "community":[{the app fields, "author","description","license","source"}]}
  * gamepads is the controller mapping database (SDcard/config/gamepads.txt in the
  * repository): fetching the catalogue also brings the card's copy up to date.
+ * community lists apps shared without their source (community/ in the repository),
+ * not reviewed: they come after the project's apps and always go to the Community folder.
  */
 #include "lx_appstore.h"
 #include "lx_http.h"
@@ -108,6 +111,39 @@ static void gamepads_sync(cJSON *g)
     ESP_LOGI(TAG, "gamepad database %s", s_pads_updated ? "updated" : "did not download");
 }
 
+/* One catalogue entry into s_apps; false if it is incomplete or names a path outside /sd/apps */
+static bool parse_app(cJSON *a, bool community)
+{
+    if (s_count >= LX_APPSTORE_MAX) return false;
+    lx_appstore_app_t *e = &s_apps[s_count];
+    memset(e, 0, sizeof(*e));
+    copy_str(e->id, sizeof(e->id), a, "id");
+    copy_str(e->name, sizeof(e->name), a, "name");
+    copy_str(e->version, sizeof(e->version), a, "version");
+    copy_str(e->folder, sizeof(e->folder), a, "folder");
+    copy_str(e->dir, sizeof(e->dir), a, "dir");
+    copy_str(e->file, sizeof(e->file), a, "file");
+    copy_str(e->url, sizeof(e->url), a, "url");
+    copy_str(e->icon, sizeof(e->icon), a, "icon");
+    copy_str(e->sha256, sizeof(e->sha256), a, "sha256");
+    cJSON *size = cJSON_GetObjectItem(a, "size");
+    e->size = cJSON_IsNumber(size) ? (long)size->valuedouble : 0;
+    if (community) {
+        e->community = true;
+        snprintf(e->folder, sizeof(e->folder), "%s", LX_APPSTORE_COMMUNITY);
+        copy_str(e->author, sizeof(e->author), a, "author");
+        copy_str(e->description, sizeof(e->description), a, "description");
+    }
+    for (int i = 0; i < s_count; i++)           /* the project's app wins over a community one */
+        if (strcmp(s_apps[i].id, e->id) == 0) return false;
+    bool bad = strstr(e->dir, "..") || strchr(e->dir, '/') || strstr(e->file, "..") ||
+               strchr(e->file, '/') || strstr(e->folder, "..") || strchr(e->folder, '/');
+    if (!e->id[0] || !e->dir[0] || !e->file[0] || !e->url[0] || strlen(e->sha256) != 64 || e->size <= 0 || bad)
+        return false;
+    s_count++;
+    return true;
+}
+
 static void fetch_task(void *arg)
 {
     char url[256];
@@ -128,27 +164,9 @@ static void fetch_task(void *arg)
     } else {
         s_count = 0;
         cJSON *a;
-        cJSON_ArrayForEach(a, apps) {
-            if (s_count >= LX_APPSTORE_MAX) break;
-            lx_appstore_app_t *e = &s_apps[s_count];
-            memset(e, 0, sizeof(*e));
-            copy_str(e->id, sizeof(e->id), a, "id");
-            copy_str(e->name, sizeof(e->name), a, "name");
-            copy_str(e->version, sizeof(e->version), a, "version");
-            copy_str(e->folder, sizeof(e->folder), a, "folder");
-            copy_str(e->dir, sizeof(e->dir), a, "dir");
-            copy_str(e->file, sizeof(e->file), a, "file");
-            copy_str(e->url, sizeof(e->url), a, "url");
-            copy_str(e->icon, sizeof(e->icon), a, "icon");
-            copy_str(e->sha256, sizeof(e->sha256), a, "sha256");
-            cJSON *size = cJSON_GetObjectItem(a, "size");
-            e->size = cJSON_IsNumber(size) ? (long)size->valuedouble : 0;
-            /* a name that could leave /sd/apps is not taken */
-            bool bad = strstr(e->dir, "..") || strchr(e->dir, '/') || strstr(e->file, "..") ||
-                       strchr(e->file, '/') || strstr(e->folder, "..") || strchr(e->folder, '/');
-            if (e->id[0] && e->dir[0] && e->file[0] && e->url[0] && strlen(e->sha256) == 64 && e->size > 0 && !bad)
-                s_count++;
-        }
+        cJSON_ArrayForEach(a, apps) parse_app(a, false);
+        int own = s_count;
+        cJSON_ArrayForEach(a, cJSON_GetObjectItem(j, "community")) parse_app(a, true);
         s_nfolders = 0;
         cJSON *f;
         cJSON_ArrayForEach(f, cJSON_GetObjectItem(j, "folders")) {
@@ -157,7 +175,7 @@ static void fetch_task(void *arg)
             copy_str(s_folders[s_nfolders].icon, sizeof(s_folders[0].icon), f, "icon");
             s_nfolders++;
         }
-        ESP_LOGI(TAG, "catalogue: %d apps", s_count);
+        ESP_LOGI(TAG, "catalogue: %d apps, %d community", own, s_count - own);
         s_pads_updated = false;
         gamepads_sync(cJSON_GetObjectItem(j, "gamepads"));
         s_state = LX_APPSTORE_DONE;

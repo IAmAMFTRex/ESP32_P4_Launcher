@@ -17,7 +17,7 @@ M5Stack Tab5 (1280×720).
 
 | Launcher version | App ABI | Toolchain | Boards |
 |---|---|---|---|
-| 0.24.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600), M5Stack Tab5 (720×1280) |
+| 0.25.0 | 2.0-preview | ESP-IDF v5.5.2 | Guition ESP32-P4 4.3" (480×800), Guition JC1060P470C 7" (1024×600), M5Stack Tab5 (720×1280) |
 
 > **Status: active development.** The ABI is a preview and may still change. Everything below describes
 > what exists in the code today; the plan for what comes next is in [docs/WORKPLAN.md](docs/WORKPLAN.md).
@@ -32,6 +32,7 @@ M5Stack Tab5 (1280×720).
 - [Preparing the SD card](#preparing-the-sd-card)
 - [Controls](#controls)
 - [Writing your own PAPP](#writing-your-own-papp)
+- [Sharing your app](#sharing-your-app)
 - [The SDK](#the-sdk)
 - [How loading works](#how-loading-works)
 - [The `.papp` file format](#the-papp-file-format)
@@ -458,6 +459,59 @@ PAPP_FAST_BSS  static uint16_t line[320];
   touch flash from such a stack, so launcher services that write flash must hand that work to an
   internal-stack task.
 
+## Sharing your app
+
+You can share an app you built without sharing its source: send the `.papp` in a pull request. Once it is
+merged, it appears in **Settings → Apps** under **Community** with your name, and installs into a Community
+folder on the home screen. Updates reach users the same way as the project's apps.
+
+![Settings → Apps with a community app at the end of the list](docs/images/community.png)
+
+**What to send.** One folder per app under [`community/`](community), named like the app in lowercase:
+
+```
+community/my-game/
+├── my-game.papp       the app, at most 4 MB (larger: see below)
+├── icon.png           square PNG, 64 to 256 pixels, 88×88 is best, transparency OK
+├── app.json           author, description, licence, optional source link
+└── screenshot.png     optional
+```
+
+```json
+{
+  "author": "Your name or GitHub user",
+  "description": "One line about the app, shown in Settings > Apps",
+  "license": "MIT",
+  "source": "https://github.com/you/your-app"
+}
+```
+
+1. Give the app its own id in `PAPP_MANIFEST` (`yourname.game`). Ids starting with `emu.`, `game.`, `test.`,
+   `sys.` or `lx.` belong to the project. Put the version in `version.txt` beside the source.
+2. Check the folder: `python tools/community.py`.
+3. Open a pull request. Without git: fork the repository on GitHub, open `community/`, choose
+   **Add file → Upload files** and drop the folder in. The pull request template has a short checklist.
+
+A check runs on every pull request ([`.github/workflows/community.yml`](.github/workflows/community.yml)). It
+reads the app's manifest and fails if:
+
+- the id is taken or reserved, or the app is marked hidden
+- a changed app keeps its old version, or goes back to a lower one
+- the app needs an interface version the launcher doesn't have
+- a file is missing, too big, or doesn't belong in the folder
+
+To update your app, bump `version.txt` and send the new `.papp` the same way. An app over 4 MB stays on
+your own release page: leave the `.papp` out and put `"url"`, `"sha256"` and `"size"` in `app.json`. The
+launcher checks every download against that SHA-256.
+
+**Before you install or merge one.** A PAPP is native code and runs without a sandbox: an app can do anything
+the board can, including deleting files on the card. Without the source, nobody can review what it does. So
+Settings → Apps names the author and marks community apps as not reviewed, and **Install all** never installs
+them; each one is the user's own choice. Merge apps from people you trust.
+
+**Licences.** An app built on GPL code, such as most emulator cores, can't be shared as a binary alone. Its
+source has to be published too, so put the link in `source`.
+
 ## The SDK
 
 Include only `papp/papp.h`. The full API, with examples, is in
@@ -639,7 +693,9 @@ apps/                  emulators, games and test apps
   common/icons/        emulator and folder icons
 tools/papp_dev.py      DevLink host tool
 tools/make_release.py  release files for Settings → Update, every board
-tools/make_apps_release.py  app catalogue and controller database for Settings → Apps
+tools/make_apps_release.py  app catalogue, community apps and controller database for Settings → Apps
+tools/community.py     checks the community apps (the pull request check runs it)
+community/             apps shared without their source, one folder each
 SDcard/                starter card: shareable game data, controller database, ROM folders
 tests/host/            relocation test
 tests/board/smoke.py   board regression run

@@ -10,6 +10,7 @@
 #include "esp_err.h"
 
 #define LX_APPSTORE_MAX 64
+#define LX_APPSTORE_COMMUNITY "Community"     /* folder of the community apps */
 
 typedef struct {
     char id[32];
@@ -22,6 +23,9 @@ typedef struct {
     char icon[192];             /* "" = none */
     char sha256[65];
     long size;
+    bool community;             /* shared without source, not reviewed (after the project's apps) */
+    char author[32];            /* community apps */
+    char description[124];
 } lx_appstore_app_t;
 
 typedef enum {

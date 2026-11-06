@@ -5,7 +5,7 @@ with an emblem on its front. Drawn at 4x and scaled down for smooth edges.
 
     python apps/common/icons/make_folder_icons.py
 
-Writes folder_games.png and folder_emulators.png next to this script. Copy one to
+Writes folder_games.png, folder_emulators.png and folder_community.png next to this script. Copy one to
 /sd/apps/<folder>/icon.png to use it.
 """
 import os
@@ -68,6 +68,19 @@ def cartridge(d, cx, cy, ink, hole):
         d.rectangle([x, y0 + h - 7 * S, x + 2 * S, y0 + h - 2 * S], fill=hole)
 
 
+def people(d, cx, cy, ink, hole):
+    for dx, r, top in ((-11, 6, 3), (11, 6, 3), (0, 7, 0)):                                     # back two, front one
+        x, y = cx + dx * S, cy - 9 * S + top * S
+        if dx:
+            d.ellipse([x - r * S, y - r * S, x + r * S, y + r * S], fill=ink)                    # head
+            d.pieslice([x - 11 * S, y + 6 * S, x + 11 * S, y + 28 * S], 180, 360, fill=ink)       # shoulders
+            continue
+        d.ellipse([x - (r + 2) * S, y - (r + 2) * S, x + (r + 2) * S, y + (r + 2) * S], fill=hole)   # gap
+        d.pieslice([x - 15 * S, y + 5 * S, x + 15 * S, y + 33 * S], 180, 360, fill=hole)
+        d.ellipse([x - r * S, y - r * S, x + r * S, y + r * S], fill=ink)
+        d.pieslice([x - 13 * S, y + 7 * S, x + 13 * S, y + 31 * S], 180, 360, fill=ink)
+
+
 def make(name, emblem):
     img = base()
     d = ImageDraw.Draw(img)
@@ -79,3 +92,4 @@ def make(name, emblem):
 if __name__ == "__main__":
     make("folder_games.png", gamepad)
     make("folder_emulators.png", cartridge)
+    make("folder_community.png", people)

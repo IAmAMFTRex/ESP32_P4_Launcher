@@ -55,9 +55,11 @@ apps/common/v1compat/     v1 `app_services_t` host on the SDK + v1build.py: the 
                           doom, opentyrian, quake, duke3d build with their own glue unchanged; frames go to the PPA without a copy (DISP v3 `present_ext`)
 tools/papp_dev.py         DevLink host tool
 tools/make_release.py     Release files for Settings → Update: launcher.bin + latest.json, prints the gh command
-tools/make_apps_release.py  Catalogue for Settings → Apps from build/apps: apps.json + .papp + icons; --publish uploads
+tools/make_apps_release.py  Catalogue for Settings → Apps from build/apps + community/: apps.json + .papp + icons; --publish uploads
                           them to the "apps" pre-release (bump the app's version.txt first). --base + /sd/update/apps_url.txt
                           = test from a local server
+community/<dir>/          Community apps (PR with .papp + icon.png + app.json, no source): tools/community.py checks them
+                          (.github/workflows/community.yml on PRs); catalogue "community" list, Community folder, not in Install all
 SDcard/                   Starter card for new users (README.md): shareable game data, config/gamepads.txt, ROM folders.
                           Its .gitignore is an allow-list: ROMs, BIOS, saves and commercial data put there stay local
 tests/host/test_reloc.py  Host relocation equivalence test

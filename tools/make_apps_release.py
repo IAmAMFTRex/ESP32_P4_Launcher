@@ -16,11 +16,15 @@ apps.json:
   {"format": 1,
    "folders": {"Emulators": {"icon": url}, ...},
    "apps": [{"id", "name", "version", "folder", "dir", "file", "url", "size", "sha256", "icon"}],
-   "gamepads": {"url", "size", "sha256"}}
+   "gamepads": {"url", "size", "sha256"},
+   "community": [{the app fields, plus "author", "description", "license", "source"}]}
 folder: where a new install goes (/sd/apps/<folder>/<dir>/<file>; "" = the main page).
 An installed app is updated where it is, wherever the user moved it.
 gamepads: the controller mapping database, SDcard/config/gamepads.txt; the launcher
 replaces /sd/config/gamepads.txt with it when Settings -> Apps reads the catalogue.
+community: the apps under community/ (shared without source, checked by tools/community.py),
+in the "Community" folder. Their files are uploaded as c_<dir>.papp and c_<dir>.png, or the
+app's own url is used. Launchers before 0.25 ignore this list.
 """
 import argparse
 import hashlib
@@ -38,7 +42,9 @@ BASE = f"https://github.com/{REPO}/releases/download/{TAG}/"
 ICONS = os.path.join(ROOT, "apps", "common", "icons")
 GAMEPADS = os.path.join(ROOT, "SDcard", "config", "gamepads.txt")
 FOLDERS = {"emu.": "Emulators", "game.": "Games"}          # by app id prefix; others: main page
-FOLDER_ICONS = {"Emulators": "folder_emulators.png", "Games": "folder_games.png"}
+FOLDER_ICONS = {"Emulators": "folder_emulators.png", "Games": "folder_games.png",
+                "Community": "folder_community.png"}
+COMMUNITY_FOLDER = "Community"
 PAPP_MAGIC = 0x32504150          # "PAP2"
 MANIFEST_MAGIC = 0x464E414D      # "MANF"
 MF_HIDDEN = 1 << 1
@@ -112,7 +118,50 @@ def main():
     if not apps:
         raise SystemExit("no app built: run python apps/build_all.py")
 
+    def add_folder_icon(folder):
+        if folder in folders:
+            return
+        folders[folder] = {}
+        fi = FOLDER_ICONS.get(folder)
+        if fi and os.path.isfile(os.path.join(ICONS, fi)):
+            shutil.copyfile(os.path.join(ICONS, fi), os.path.join(args.out, fi))
+            files.append(fi)
+            folders[folder]["icon"] = base + fi
+
+    community = []
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import community as cm
+    for folder in cm.folders():
+        app, errors = cm.load(folder)
+        if errors:
+            raise SystemExit(f"community/{app['dir']}: " + "; ".join(errors) + " (python tools/community.py)")
+        if app["id"] in {a["id"] for a in apps}:
+            raise SystemExit(f"community/{app['dir']}: id {app['id']} is one of the project's apps")
+        meta = app["meta"]
+        entry = dict(id=app["id"], name=app["name"], version=app["version"], folder=COMMUNITY_FOLDER,
+                     dir=app["dir"], file=app["papp_file"], size=app["size"], sha256=app["sha256"],
+                     author=meta["author"].strip(), description=meta["description"].strip(),
+                     license=meta["license"].strip())
+        if meta.get("source"):
+            entry["source"] = meta["source"]
+        if app.get("path"):
+            asset = f"c_{app['dir']}.papp"
+            shutil.copyfile(app["path"], os.path.join(args.out, asset))
+            files.append(asset)
+            entry["url"] = base + asset
+        else:
+            entry["url"] = app["url"]
+        asset = f"c_{app['dir']}.png"
+        shutil.copyfile(os.path.join(folder, "icon.png"), os.path.join(args.out, asset))
+        files.append(asset)
+        entry["icon"] = base + asset
+        community.append(entry)
+        add_folder_icon(COMMUNITY_FOLDER)
+        print(f"{app['name']:16s} {app['version']:8s} community, by {entry['author']}")
+
     catalogue = dict(format=1, folders=folders, apps=apps)
+    if community:
+        catalogue["community"] = community
     if os.path.isfile(GAMEPADS):
         shutil.copyfile(GAMEPADS, os.path.join(args.out, "gamepads.txt"))
         files.append("gamepads.txt")
@@ -123,7 +172,7 @@ def main():
     with open(os.path.join(args.out, "apps.json"), "w") as f:
         json.dump(catalogue, f, indent=1)
     files.append("apps.json")
-    print(f"{len(apps)} apps in {args.out}")
+    print(f"{len(apps)} apps and {len(community)} community apps in {args.out}")
 
     paths = [os.path.join(args.out, n) for n in files]
     if not args.publish:
