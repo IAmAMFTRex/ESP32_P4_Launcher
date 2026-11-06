@@ -246,8 +246,32 @@ static void scan_dir(const char *base, const char *parent)
     closedir(d);
 }
 
+/* The Community folder is always on the home screen, so users know where shared apps
+ * go (Settings -> Apps installs them there). Made once per boot when the card has none;
+ * its icon is built into the launcher. */
+extern const uint8_t folder_community_png_start[] asm("_binary_folder_community_png_start");
+extern const uint8_t folder_community_png_end[] asm("_binary_folder_community_png_end");
+
+static void community_folder(void)
+{
+    static bool done;
+    struct stat st;
+    if (done) return;
+    if (stat(APPS_DIR, &st) != 0) return;                   /* no card (yet) */
+    done = true;
+    const char *dir = APPS_DIR "/" LX_APPSTORE_COMMUNITY;
+    if (stat(dir, &st) != 0 && mkdir(dir, 0775) != 0) return;
+    const char *icon = APPS_DIR "/" LX_APPSTORE_COMMUNITY "/icon.png";
+    if (stat(icon, &st) == 0) return;
+    FILE *f = fopen(icon, "wb");
+    if (!f) return;
+    fwrite(folder_community_png_start, 1, folder_community_png_end - folder_community_png_start, f);
+    fclose(f);
+}
+
 static void scan_apps(void)
 {
+    community_folder();
     s_napps = s_ninstalled = 0;
     s_files_app[0] = 0;
     if (!s_apps) s_apps = heap_caps_calloc(MAX_APPS, sizeof(app_entry_t), MALLOC_CAP_SPIRAM);
