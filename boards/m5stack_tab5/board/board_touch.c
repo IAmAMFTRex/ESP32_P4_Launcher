@@ -55,6 +55,7 @@ esp_err_t bsp_touch_init(void)
 
     uint16_t addr = 0;
     s_st = board_panel() != BOARD_PANEL_ILI9881C;
+    if (!s_st) board_touch_reset();
     if (s_st) addr = ST_ADDR;
     else if (i2c_master_probe(bus, GT911_ADDR_A, 50) == ESP_OK) addr = GT911_ADDR_A;
     else if (i2c_master_probe(bus, GT911_ADDR_B, 50) == ESP_OK) addr = GT911_ADDR_B;

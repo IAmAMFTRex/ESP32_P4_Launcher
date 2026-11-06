@@ -7,6 +7,7 @@
 #include "board_pins.h"
 
 #include "esp_log.h"
+#include "driver/gpio.h"
 #include "esp_vfs_fat.h"
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
@@ -102,6 +103,30 @@ esp_err_t bsp_init(void)
     if (err != ESP_OK) ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(err));
     else expanders_init();
     return ESP_OK;      /* devices report their own absence */
+}
+
+/* GT911 reset: TP_RST is I/O expander 1 P5, the touch INT is GPIO 23. INT high while the
+ * reset rises selects address 0x14 (M5Stack's choice); then INT low for 50 ms, the GT911's
+ * synchronisation, and released as an input. The GT911 then loads its configuration. */
+void board_touch_reset(void)
+{
+    i2c_master_dev_handle_t x1 = iox_add(BOARD_IOX1_ADDR);
+    if (!x1) return;
+    gpio_config_t io = { .pin_bit_mask = 1ULL << BOARD_TOUCH_INT, .mode = GPIO_MODE_OUTPUT };
+    gpio_config(&io);
+    gpio_set_level(BOARD_TOUCH_INT, 1);
+    uint8_t reg = IOX_OUT, out = 0;
+    i2c_master_transmit_receive(x1, &reg, 1, &out, 1, 50);
+    iox_set(x1, IOX_OUT, out & ~(1 << 5));
+    vTaskDelay(pdMS_TO_TICKS(10));
+    iox_set(x1, IOX_OUT, out | (1 << 5));
+    vTaskDelay(pdMS_TO_TICKS(5));
+    gpio_set_level(BOARD_TOUCH_INT, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    io.mode = GPIO_MODE_INPUT;
+    gpio_config(&io);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    i2c_master_bus_rm_device(x1);
 }
 
 i2c_master_bus_handle_t board_i2c_bus(void)

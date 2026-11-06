@@ -28,7 +28,7 @@ components/lx_input/      input manager: USB HID gamepads/keyboards, XInput (Xbo
                           SDcard/config/gamepads.txt, downloaded by Settings → Apps); NVS "padmap" = pre-0.23, read-only fallback
 components/lx_update/     self-update from /sd/update/launcher.bin + rollback confirm; online update (latest.json);
                           lx_appstore = app catalogue for Settings → Apps (apps.json on the "apps" release)
-components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted ~2.0 to match the C6's 2.0.17);
+components/lx_net/        Wi-Fi station, NTP, time zone via the ESP32-C6 (esp_hosted 2.0.17 to match the C6's firmware);
                           saved network = /sd/config/wifi.txt (ssid=/password= lines; NVS "net" = pre-0.24, moved to the card at boot)
 components/lx_web/        Wi-Fi file manager: web page for the SD card, on request, with a PIN per start
 papp-sdk/                 App SDK: include/papp/papp.h, runtime/ (crt0, libc glue), ld/papp.ld,
@@ -76,6 +76,8 @@ tests/board/smoke.py      Board regression: relocation test, test apps, crash re
   M5Stack Tab5 `m5stack_tab5` on **COM15** (`-B build_m5stack_tab5`; image "launcher_m5stack_tab5").
   `managed_components/` is shared and esp_hosted differs per board: after building another board, add `reconfigure`.
   launcher/CMakeLists.txt turns off the component manager's new-version check (newer esp_hosted releases broke configure).
+  Every managed component is pinned to an exact version in the idf_component.yml files (dependencies.lock is not in git,
+  it differs per board): a self-built launcher matches the release. Other ESP-IDF versions get a configure warning.
   `papp_dev.py bootlog` shows what the board logged before DevLink came up (bring-up of a new board).
 
 ## Dev loop (works without touching the board)

@@ -12,6 +12,7 @@
 #define BOARD_I2C_SDA       31      /* touch, codec, expanders, RTC, power monitor */
 #define BOARD_I2C_SCL       32
 #define BOARD_I2C_PORT      1
+#define BOARD_TOUCH_INT     23      /* GT911 INT; its reset is I/O expander 1 P5 */
 
 /* PI4IOE5V6408 I/O expanders */
 #define BOARD_IOX1_ADDR     0x43    /* P1 speaker amp, P4 LCD reset (released as input + pull-up) */
