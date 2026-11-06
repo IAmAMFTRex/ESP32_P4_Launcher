@@ -3,7 +3,7 @@
  *   args: (none)                 browse /sd/roms/nes and play the chosen ROM
  *         <rom> [resume]         play <rom> directly (DevLink testing)
  *
- * Video: a 256x224 surface scaled 2x by the compositor; a worker thread turns
+ * Video: a 256x224 surface scaled to fit the screen by the compositor; a worker thread turns
  * nofrendo's 8-bit frames into RGB565 and presents them, so waiting for the
  * display never stalls emulation. Audio: one 32 kHz mono stream; its
  * blocking write paces the emulator. Saves: the browser's save path
@@ -109,7 +109,7 @@ void nb_audio_write(const short *mono, int samples)
 int nb_av_init(int sample_rate)
 {
     papp_surface_cfg_t sc = { .width = NES_W, .height = NES_H, .format = PAPP_PIXFMT_RGB565,
-                              .scale = PAPP_SCALE_INTEGER, .buffers = 2 };
+                              .scale = PAPP_SCALE_FIT_ASPECT, .buffers = 2 };
     s_surface = papp_disp_surface_create(&sc);
     s_frame[0] = papp_alloc(NES_W * NES_H, PAPP_MEM_ANY, 64);
     s_frame[1] = papp_alloc(NES_W * NES_H, PAPP_MEM_ANY, 64);
